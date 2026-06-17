@@ -31,23 +31,23 @@ type DetailRow = Omit<CoverageResult, "status"> & {
 };
 
 function buildDetailRows(results: CoverageResult[]): DetailRow[] {
-  return results.flatMap((result) => {
+  return results.flatMap((result, resultIndex) => {
     if (result.eventName !== "公共事件属性") {
-      return [{ ...result, rowKey: result.eventName, sourceEventName: result.eventName }];
+      return [{ ...result, rowKey: `${resultIndex}:${result.eventName}`, sourceEventName: result.eventName }];
     }
 
     if (result.missingProperties.length <= 1) {
       return [{
         ...result,
-        rowKey: result.eventName,
+        rowKey: `${resultIndex}:${result.eventName}`,
         sourceEventName: result.eventName,
         status: result.missingProperties.length === 1 ? "公共事件缺失" : result.status,
       }];
     }
 
-    return result.missingProperties.map((missingProperty) => ({
+    return result.missingProperties.map((missingProperty, missingIndex) => ({
       ...result,
-      rowKey: `${result.eventName}:${missingProperty}`,
+      rowKey: `${resultIndex}:${result.eventName}:${missingIndex}:${missingProperty}`,
       sourceEventName: result.eventName,
       expectedProperties: [missingProperty.split("：")[0]],
       coveredProperties: [],
@@ -405,27 +405,28 @@ export default function App() {
                 <th>缺失属性</th>
               </tr>
             </thead>
-            <tbody>
-              {filteredResults.map((result) => (
-                <tr key={result.rowKey}>
-                  <td>
-                    <span className={`status status-${result.status}`}>{result.status}</span>
-                  </td>
-                  <td>
-                    <code>{result.eventName}</code>
-                  </td>
-                  <td className="count-cell">{result.triggerCount ?? "-"}</td>
-                  <td>{result.expectedProperties.join(", ") || "-"}</td>
-                  <td>{result.coveredProperties.join(", ") || "-"}</td>
-                  <td className="missing-cell">{renderPropertyLines(result.missingProperties)}</td>
-                </tr>
-              ))}
-              {filteredResults.length === 0 && (
+            <tbody key={`${statusFilter}:${query}:${filteredResults.length}`}>
+              {filteredResults.length === 0 ? (
                 <tr>
                   <td colSpan={6} className="empty-cell">
                     上传两份数据后显示覆盖明细
                   </td>
                 </tr>
+              ) : (
+                filteredResults.map((result) => (
+                  <tr key={result.rowKey}>
+                    <td>
+                      <span className={`status status-${result.status}`}>{result.status}</span>
+                    </td>
+                    <td>
+                      <code>{result.eventName}</code>
+                    </td>
+                    <td className="count-cell">{result.triggerCount ?? "-"}</td>
+                    <td>{result.expectedProperties.join(", ") || "-"}</td>
+                    <td>{result.coveredProperties.join(", ") || "-"}</td>
+                    <td className="missing-cell">{renderPropertyLines(result.missingProperties)}</td>
+                  </tr>
+                ))
               )}
             </tbody>
           </table>
