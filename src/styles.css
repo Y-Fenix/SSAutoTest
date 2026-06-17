@@ -392,6 +392,7 @@ table {
   width: 100%;
   min-width: 1320px;
   border-collapse: collapse;
+  table-layout: fixed;
   background: #ffffff;
 }
 
@@ -402,6 +403,7 @@ td {
   text-align: left;
   vertical-align: top;
   font-size: 13px;
+  overflow-wrap: anywhere;
 }
 
 th:first-child,
@@ -411,11 +413,33 @@ td:first-child {
   white-space: nowrap;
 }
 
+th:nth-child(2),
+td:nth-child(2) {
+  width: 180px;
+  min-width: 180px;
+  white-space: nowrap;
+}
+
 th:nth-child(3),
 td:nth-child(3) {
   width: 96px;
   min-width: 96px;
   white-space: nowrap;
+}
+
+th:nth-child(4),
+td:nth-child(4) {
+  width: 34%;
+}
+
+th:nth-child(5),
+td:nth-child(5) {
+  width: 28%;
+}
+
+th:nth-child(6),
+td:nth-child(6) {
+  width: 26%;
 }
 
 th {

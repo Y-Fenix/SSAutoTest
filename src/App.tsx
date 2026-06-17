@@ -24,6 +24,12 @@ function renderPropertyLines(items: string[]) {
   );
 }
 
+function renderMissingDetails(result: DetailRow) {
+  if (result.status !== "公共事件缺失") return renderPropertyLines(result.missingProperties);
+  const eventNames = result.missingProperties.map((item) => item.split("：").slice(1).join("：") || item);
+  return renderPropertyLines(eventNames);
+}
+
 type DetailRow = Omit<CoverageResult, "status"> & {
   rowKey: string;
   sourceEventName: string;
@@ -402,7 +408,7 @@ export default function App() {
                 <th>触发次数</th>
                 <th>预期属性</th>
                 <th>已覆盖属性</th>
-                <th>缺失属性</th>
+                <th>缺失属性/事件</th>
               </tr>
             </thead>
             <tbody key={`${statusFilter}:${query}:${filteredResults.length}`}>
@@ -424,7 +430,7 @@ export default function App() {
                     <td className="count-cell">{result.triggerCount ?? "-"}</td>
                     <td>{result.expectedProperties.join(", ") || "-"}</td>
                     <td>{result.coveredProperties.join(", ") || "-"}</td>
-                    <td className="missing-cell">{renderPropertyLines(result.missingProperties)}</td>
+                    <td className="missing-cell">{renderMissingDetails(result)}</td>
                   </tr>
                 ))
               )}
@@ -453,8 +459,8 @@ export default function App() {
                             .join("；")}`
                         : (
                             <>
-                              缺失属性：
-                              {renderPropertyLines(result.missingProperties)}
+                              {result.status === "公共事件缺失" ? "缺失事件：" : "缺失属性："}
+                              {renderMissingDetails(result)}
                             </>
                           )}
                   </span>
