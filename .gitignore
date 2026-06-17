@@ -1,0 +1,9 @@
+node_modules/
+dist/
+work/
+outputs/
+.superpowers/
+.DS_Store
+*.log
+*.pid
+*.local
