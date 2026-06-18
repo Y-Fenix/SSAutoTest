@@ -50,6 +50,17 @@ function renderMissingDetails(result: DetailRow) {
   return renderPropertyLines(eventNames);
 }
 
+function renderPropertyDetail(detail: string) {
+  if (!detail.trim()) return "-";
+  return (
+    <span className="detail-value-lines">
+      {detail.split(/\r?\n/).map((line, index) => (
+        <span key={`${index}:${line}`}>{line || " "}</span>
+      ))}
+    </span>
+  );
+}
+
 type DetailRow = Omit<CoverageResult, "status"> & {
   rowKey: string;
   sourceEventName: string;
@@ -116,6 +127,19 @@ export default function App() {
   );
 
   const detailRows = useMemo(() => buildDetailRows(report?.results ?? []), [report]);
+  const propertyDetailRows = useMemo(() => {
+    return detailRows.flatMap((result) =>
+      result.expectedProperties
+        .filter((propertyName) => result.propertyDetails[propertyName]?.trim())
+        .map((propertyName) => ({
+          rowKey: `${result.rowKey}:detail:${propertyName}`,
+          eventName: result.eventName,
+          propertyName,
+          propertyDetail: result.propertyDetails[propertyName] ?? "",
+          isPassed: result.passedProperties.includes(propertyName),
+        })),
+    );
+  }, [detailRows]);
 
   const filteredResults = useMemo(() => {
     const needle = query.trim().toLowerCase();
@@ -135,6 +159,14 @@ export default function App() {
       return statusMatches && text.includes(needle);
     });
   }, [detailRows, query, statusFilter]);
+
+  const filteredPropertyDetailRows = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    return propertyDetailRows.filter((row) => {
+      const text = [row.eventName, row.propertyName, row.propertyDetail].join(" ").toLowerCase();
+      return text.includes(needle);
+    });
+  }, [propertyDetailRows, query]);
 
   const statusCounts = useMemo(() => {
     const counts = Object.fromEntries(statusOptions.map((option) => [option, 0])) as Record<
@@ -422,47 +454,80 @@ export default function App() {
           </div>
         </div>
         <p className="filter-summary">
-          当前显示 {filteredResults.length} / {detailRows.length} 条明细
+          {statusFilter === "详情缺失"
+            ? `当前显示 ${filteredPropertyDetailRows.length} / ${propertyDetailRows.length} 条属性详情`
+            : `当前显示 ${filteredResults.length} / ${detailRows.length} 条明细`}
         </p>
         <div className="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>状态</th>
-                <th>事件名</th>
-                <th>触发次数</th>
-                <th>预期属性</th>
-                <th>已覆盖属性</th>
-                <th>通过率</th>
-              </tr>
-            </thead>
-            <tbody key={`${statusFilter}:${query}:${filteredResults.length}`}>
-              {filteredResults.length === 0 ? (
+          {statusFilter === "详情缺失" ? (
+            <table className="property-detail-table">
+              <thead>
                 <tr>
-                  <td colSpan={6} className="empty-cell">
-                    上传两份数据后显示覆盖明细
-                  </td>
+                  <th>事件名</th>
+                  <th>属性名</th>
+                  <th>属性详情</th>
                 </tr>
-              ) : (
-                filteredResults.map((result) => (
-                  <tr key={result.rowKey}>
-                    <td>
-                      <span className={`status status-${result.status}`}>{result.status}</span>
-                    </td>
-                    <td>
-                      <code>{result.eventName}</code>
-                    </td>
-                    <td className="count-cell">{result.triggerCount ?? "-"}</td>
-                    <td>{renderPropertyLines(result.expectedProperties)}</td>
-                    <td>{renderCoveredPropertyLines(result)}</td>
-                    <td className="rate-cell">
-                      <strong>{formatPercent(result.passRate)}</strong>
+              </thead>
+              <tbody key={`detail:${query}:${filteredPropertyDetailRows.length}`}>
+                {filteredPropertyDetailRows.length === 0 ? (
+                  <tr>
+                    <td colSpan={3} className="empty-cell">
+                      没有可展示的属性详情
                     </td>
                   </tr>
-                ))
-              )}
-            </tbody>
-          </table>
+                ) : (
+                  filteredPropertyDetailRows.map((row) => (
+                    <tr className={row.isPassed ? "detail-row-pass" : "detail-row-fail"} key={row.rowKey}>
+                      <td>
+                        <code>{row.eventName}</code>
+                      </td>
+                      <td>{row.propertyName}</td>
+                      <td>{renderPropertyDetail(row.propertyDetail)}</td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          ) : (
+            <table>
+              <thead>
+                <tr>
+                  <th>状态</th>
+                  <th>事件名</th>
+                  <th>触发次数</th>
+                  <th>预期属性</th>
+                  <th>已覆盖属性</th>
+                  <th>通过率</th>
+                </tr>
+              </thead>
+              <tbody key={`${statusFilter}:${query}:${filteredResults.length}`}>
+                {filteredResults.length === 0 ? (
+                  <tr>
+                    <td colSpan={6} className="empty-cell">
+                      上传两份数据后显示覆盖明细
+                    </td>
+                  </tr>
+                ) : (
+                  filteredResults.map((result) => (
+                    <tr key={result.rowKey}>
+                      <td>
+                        <span className={`status status-${result.status}`}>{result.status}</span>
+                      </td>
+                      <td>
+                        <code>{result.eventName}</code>
+                      </td>
+                      <td className="count-cell">{result.triggerCount ?? "-"}</td>
+                      <td>{renderPropertyLines(result.expectedProperties)}</td>
+                      <td>{renderCoveredPropertyLines(result)}</td>
+                      <td className="rate-cell">
+                        <strong>{formatPercent(result.passRate)}</strong>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          )}
         </div>
       </section>
 

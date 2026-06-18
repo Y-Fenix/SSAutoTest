@@ -536,6 +536,54 @@ code {
   font-weight: 700;
 }
 
+.property-detail-table {
+  min-width: 1180px;
+}
+
+.property-detail-table th:first-child,
+.property-detail-table td:first-child {
+  width: 220px;
+  min-width: 220px;
+}
+
+.property-detail-table th:nth-child(2),
+.property-detail-table td:nth-child(2) {
+  width: 240px;
+  min-width: 240px;
+  white-space: nowrap;
+}
+
+.property-detail-table th:nth-child(3),
+.property-detail-table td:nth-child(3) {
+  width: auto;
+}
+
+.property-detail-table td {
+  border-right: 1px solid #edf1f6;
+}
+
+.property-detail-table td:last-child {
+  border-right: 0;
+}
+
+.detail-row-pass td {
+  background: #f2fbf6;
+  color: #167346;
+  font-weight: 700;
+}
+
+.detail-row-fail td {
+  background: #fff5f5;
+  color: #b42318;
+  font-weight: 700;
+}
+
+.detail-value-lines {
+  display: grid;
+  gap: 2px;
+  white-space: pre-wrap;
+}
+
 .empty-cell {
   color: #667085;
   text-align: center;
