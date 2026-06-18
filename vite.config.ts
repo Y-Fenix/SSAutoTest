@@ -1,10 +1,63 @@
 import react from "@vitejs/plugin-react";
 import { execFile } from "node:child_process";
+import { access } from "node:fs/promises";
+import { homedir } from "node:os";
+import path from "node:path";
 import { promisify } from "node:util";
 import { defineConfig, type Plugin } from "vite";
 import { extractSheets, extractValues, rowsFromValues, toSheetTabs } from "./src/lib/larkSheetServerUtils";
 
 const execFileAsync = promisify(execFile);
+let larkCliPathCache: string | null = null;
+
+async function canAccess(filePath: string): Promise<boolean> {
+  try {
+    await access(filePath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function resolveLarkCliPath(): Promise<string> {
+  if (larkCliPathCache) return larkCliPathCache;
+
+  const pathDirs = (process.env.PATH ?? "").split(path.delimiter).filter(Boolean);
+  const candidates = [
+    process.env.LARK_CLI_PATH,
+    ...pathDirs.map((dir) => path.join(dir, "lark-cli")),
+    path.join(homedir(), ".local/bin/lark-cli"),
+    path.join(homedir(), ".npm-global/bin/lark-cli"),
+    "/opt/homebrew/bin/lark-cli",
+    "/usr/local/bin/lark-cli",
+  ].filter(Boolean) as string[];
+
+  for (const candidate of candidates) {
+    if (await canAccess(candidate)) {
+      larkCliPathCache = candidate;
+      return candidate;
+    }
+  }
+
+  throw new Error("未检测到 lark-cli。请先安装并登录飞书 CLI，或把 lark-cli 加入 PATH 后重启局域网常驻服务。");
+}
+
+async function execLarkCli(args: string[], options: { maxBuffer: number }) {
+  const larkCliPath = await resolveLarkCliPath();
+  return execFileAsync(larkCliPath, args, {
+    ...options,
+    env: {
+      ...process.env,
+      PATH: [
+        path.join(homedir(), ".local/bin"),
+        path.join(homedir(), ".npm-global/bin"),
+        "/opt/homebrew/bin",
+        "/usr/local/bin",
+        process.env.PATH ?? "",
+      ].join(path.delimiter),
+    },
+  });
+}
 
 function friendlyLarkError(error: unknown): string {
   const raw =
@@ -20,6 +73,9 @@ function friendlyLarkError(error: unknown): string {
   if (raw.includes("need_user_authorization") || raw.includes("missing_scope")) {
     return `飞书 CLI 授权不足，请按 lark-cli 提示补充 scope 后重试。原始错误：${raw}`;
   }
+  if (raw.includes("未检测到 lark-cli") || raw.includes("ENOENT")) {
+    return "未检测到 lark-cli。请先安装并登录飞书 CLI；如果已经安装，请重启局域网常驻服务。";
+  }
   return raw;
 }
 
@@ -31,8 +87,7 @@ async function resolveSheetUrlOrToken(url: string): Promise<{ url?: string; spre
   const wikiToken = wikiTokenFromUrl(url);
   if (!wikiToken) return { url };
 
-  const node = await execFileAsync(
-    "lark-cli",
+  const node = await execLarkCli(
     ["wiki", "spaces", "get_node", "--params", JSON.stringify({ token: wikiToken }), "--as", "user"],
     { maxBuffer: 1024 * 1024 * 8 },
   );
@@ -71,7 +126,7 @@ function registerLarkSheetApi(middlewares: {
       const targetArgs = target.spreadsheetToken
         ? ["--spreadsheet-token", target.spreadsheetToken]
         : ["--url", target.url ?? url.trim()];
-      const info = await execFileAsync("lark-cli", ["sheets", "+info", ...targetArgs, "--as", "user"], {
+      const info = await execLarkCli(["sheets", "+info", ...targetArgs, "--as", "user"], {
         maxBuffer: 1024 * 1024 * 8,
       });
       const infoJson = JSON.parse(info.stdout);
@@ -90,8 +145,7 @@ function registerLarkSheetApi(middlewares: {
 
       const rows: Record<string, string | number | boolean | null | undefined>[] = [];
       for (const sheet of selectedTabs) {
-        const read = await execFileAsync(
-          "lark-cli",
+        const read = await execLarkCli(
           [
             "sheets",
             "+read",
