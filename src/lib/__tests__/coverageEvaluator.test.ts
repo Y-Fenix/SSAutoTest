@@ -178,8 +178,8 @@ describe("evaluateCoverage", () => {
     expect(report.results[0].coveredDetails).toEqual({ action: ["load"] });
     expect(report.results[0].coveredDetailItems).toEqual({ action: ["load"] });
     expect(report.results[0].passRate).toBe(1);
-    expect(report.summary.detailMissingEvents).toBe(0);
-    expect(report.summary.detailCoverageRate).toBe(1);
+    expect(report.summary.detailMissingEvents).toBe(2);
+    expect(report.summary.detailCoverageRate).toBe(1 / 3);
   });
 
   it("reports detail missing when property exists but no value matches expected details", () => {
@@ -223,7 +223,7 @@ describe("evaluateCoverage", () => {
     expect(report.results[0].coveredDetailItems).toEqual({ action: [] });
     expect(report.results[0].passedProperties).toEqual(["revenue"]);
     expect(report.results[0].passRate).toBe(0.5);
-    expect(report.summary.detailMissingEvents).toBe(1);
+    expect(report.summary.detailMissingEvents).toBe(3);
     expect(report.summary.detailCoverageRate).toBe(0);
   });
 

@@ -241,13 +241,20 @@ export function evaluateCoverage(
   const expectedEventNames = new Set(expectedEvents.map((event) => event.eventName));
   const coveredEventCount = results.filter((result) => result.status === "测试通过").length;
   const totalDetailProperties = results.reduce(
-    (sum, result) => sum + Object.values(result.propertyDetails).filter((detail) => detail.trim()).length,
+    (sum, result) => sum + Object.values(result.propertyDetailItems).reduce(
+      (itemSum, items) => itemSum + items.length,
+      0,
+    ),
     0,
   );
   const coveredDetailProperties = results.reduce(
-    (sum, result) => sum + result.detailCoveredProperties.length,
+    (sum, result) => sum + Object.values(result.coveredDetailItems).reduce(
+      (itemSum, items) => itemSum + items.length,
+      0,
+    ),
     0,
   );
+  const missingDetailProperties = totalDetailProperties - coveredDetailProperties;
 
   return {
     results,
@@ -256,13 +263,13 @@ export function evaluateCoverage(
       coveredEvents: coveredEventCount,
       missingEvents: results.filter((result) => result.status === "事件缺失").length,
       propertyMissingEvents: results.filter((result) => result.status === "属性缺失").length,
-      detailMissingEvents: results.filter((result) => result.status === "详情缺失").length,
+      detailMissingEvents: missingDetailProperties,
       totalProperties,
       coveredProperties,
       missingProperties: totalProperties - coveredProperties,
       totalDetailProperties,
       coveredDetailProperties,
-      missingDetailProperties: totalDetailProperties - coveredDetailProperties,
+      missingDetailProperties,
       eventCoverageRate: results.length === 0 ? 0 : coveredEventCount / results.length,
       propertyCoverageRate: totalProperties === 0 ? 1 : coveredProperties / totalProperties,
       detailCoverageRate: totalDetailProperties === 0 ? 1 : coveredDetailProperties / totalDetailProperties,
