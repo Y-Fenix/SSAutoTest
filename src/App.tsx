@@ -29,6 +29,10 @@ function renderPropertyLines(items: string[], className = "") {
 }
 
 function renderCoveredPropertyLines(result: DetailRow) {
+  if (result.status === "公共事件缺失") {
+    return renderPropertyLines(getCommonMissingEvents(result), "property-fail");
+  }
+
   if (result.expectedProperties.length === 0) return "-";
   return (
     <span className="property-lines">
@@ -44,10 +48,51 @@ function renderCoveredPropertyLines(result: DetailRow) {
   );
 }
 
+function parseCommonMissingProperty(value: string) {
+  const separatorIndex = value.indexOf("：");
+  if (separatorIndex === -1) return { propertyName: value, eventNames: [] };
+  return {
+    propertyName: value.slice(0, separatorIndex),
+    eventNames: value
+      .slice(separatorIndex + 1)
+      .split("、")
+      .map((eventName) => eventName.trim())
+      .filter(Boolean),
+  };
+}
+
+function getCommonMissingProperty(result: DetailRow) {
+  return parseCommonMissingProperty(result.missingProperties[0] ?? result.expectedProperties[0] ?? "");
+}
+
+function getCommonMissingEvents(result: DetailRow) {
+  return getCommonMissingProperty(result).eventNames;
+}
+
 function renderMissingDetails(result: DetailRow) {
-  if (result.status !== "公共事件缺失") return renderPropertyLines(result.missingProperties);
-  const eventNames = result.missingProperties.map((item) => item.split("：").slice(1).join("：") || item);
-  return renderPropertyLines(eventNames);
+  return renderPropertyLines(result.missingProperties);
+}
+
+function renderMissingListContent(result: DetailRow) {
+  if (result.status === "事件缺失") return "实际数据中没有该事件";
+
+  if (result.status === "公共事件缺失") {
+    const { propertyName, eventNames } = getCommonMissingProperty(result);
+    return (
+      <span className="missing-detail-block">
+        <span>公共属性：{propertyName || "-"}</span>
+        <span>缺失事件：</span>
+        <span>{eventNames.join("、") || "-"}</span>
+      </span>
+    );
+  }
+
+  return (
+    <>
+      {result.status === "详情缺失" ? "详情缺失：" : "缺失属性："}
+      {result.status === "详情缺失" ? renderPropertyLines(result.detailMissingProperties) : renderMissingDetails(result)}
+    </>
+  );
 }
 
 function renderPropertyDetail(detail: string) {
@@ -577,25 +622,8 @@ export default function App() {
               .filter((result) => result.status !== "测试通过")
               .map((result) => (
                 <div className={`missing-item missing-item-${result.status}`} key={result.rowKey}>
-                  <strong>
-                    {result.status}: {result.eventName}
-                  </strong>
-                  <span>
-                    {result.status === "事件缺失"
-                      ? "实际数据中没有该事件"
-                      : (
-                          <>
-                            {result.status === "公共事件缺失"
-                              ? "缺失事件："
-                              : result.status === "详情缺失"
-                                ? "详情缺失："
-                                : "缺失属性："}
-                            {result.status === "详情缺失"
-                              ? renderPropertyLines(result.detailMissingProperties)
-                              : renderMissingDetails(result)}
-                          </>
-                        )}
-                  </span>
+                  <strong>{result.status === "公共事件缺失" ? `${result.status}:` : `${result.status}: ${result.eventName}`}</strong>
+                  <span>{renderMissingListContent(result)}</span>
                 </div>
               ))}
             {report.results.every((result) => result.status === "测试通过") && (

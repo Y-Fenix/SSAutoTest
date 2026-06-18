@@ -662,6 +662,11 @@ code {
   font-size: 13px;
 }
 
+.missing-detail-block {
+  display: grid;
+  gap: 2px;
+}
+
 .back-to-top-button {
   position: fixed;
   right: 24px;
