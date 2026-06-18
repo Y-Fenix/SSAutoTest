@@ -10,6 +10,8 @@ export function coverageResultsToCsv(results: CoverageResult[]): string {
       "预期属性": result.expectedProperties.join("; "),
       "已覆盖属性": result.coveredProperties.join("; "),
       "缺失属性": result.missingProperties.join("; "),
+      "详情缺失": result.detailMissingProperties.join("; "),
+      "通过率": `${Math.round(result.passRate * 100)}%`,
       "备注": result.notes,
     })),
   );

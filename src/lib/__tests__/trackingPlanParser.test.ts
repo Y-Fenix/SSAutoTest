@@ -55,7 +55,7 @@ describe("parseTrackingPlanRows", () => {
     expect(events[0].properties).toEqual([]);
   });
 
-  it("uses 属性详情 as the normalized name for 备注1", () => {
+  it("reads 属性详情 as property detail", () => {
     const events = parseTrackingPlanRows([
       {
         "事件标签": "广告事件SDK",
@@ -64,13 +64,33 @@ describe("parseTrackingPlanRows", () => {
         "属性名": "action",
         "属性值类型": "字符串",
         "属性说明": "广告步骤",
-        "备注1": "request,load,revenue",
+        "属性详情": "request,load,revenue",
         "备注": "",
         "测试结果1.0.5": "",
       },
     ]);
 
     expect(events[0].properties[0].propertyDetail).toBe("request,load,revenue");
+  });
+
+  it("merges repeated event-name rows into one event", () => {
+    const events = parseTrackingPlanRows([
+      {
+        "事件名": "click",
+        "属性名": "info",
+        "属性详情": "A\nB",
+      },
+      {
+        "事件名": "click",
+        "属性名": "sub_info",
+        "属性详情": "C\nD",
+      },
+    ]);
+
+    expect(events).toHaveLength(1);
+    expect(events[0].eventName).toBe("click");
+    expect(events[0].properties.map((property) => property.propertyName)).toEqual(["info", "sub_info"]);
+    expect(events[0].properties.map((property) => property.propertyDetail)).toEqual(["A\nB", "C\nD"]);
   });
 
   it("ignores blank rows and trailing exported columns", () => {

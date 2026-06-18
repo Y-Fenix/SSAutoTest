@@ -10,16 +10,36 @@ import type { CoverageReport, CoverageResult, CoverageStatus, ExpectedEvent, Raw
 
 type DisplayStatus = CoverageStatus | "公共事件缺失";
 
-const statusOptions = ["全部", "已覆盖", "属性缺失", "公共事件缺失", "属性值异常", "事件缺失"] as const;
+const statusOptions = ["全部", "测试通过", "事件缺失", "属性缺失", "详情缺失", "公共事件缺失"] as const;
 const actualColumnPrompt = "实际数据未自动识别事件名列，请在上传区域选择事件名列后继续分析。";
 
-function renderPropertyLines(items: string[]) {
+function formatPercent(rate: number): string {
+  return `${Math.round(rate * 100)}%`;
+}
+
+function renderPropertyLines(items: string[], className = "") {
   if (items.length === 0) return "-";
   return (
     <span className="property-lines">
       {items.map((item) => (
-        <span key={item}>{item}</span>
+        <span className={className} key={item}>{item}</span>
       ))}
+    </span>
+  );
+}
+
+function renderCoveredPropertyLines(result: DetailRow) {
+  if (result.expectedProperties.length === 0) return "-";
+  return (
+    <span className="property-lines">
+      {result.expectedProperties.map((propertyName) => {
+        const isCovered = result.coveredProperties.includes(propertyName);
+        return (
+          <span className={isCovered ? "property-pass" : "property-fail"} key={propertyName}>
+            {propertyName}
+          </span>
+        );
+      })}
     </span>
   );
 }
@@ -37,17 +57,17 @@ type DetailRow = Omit<CoverageResult, "status"> & {
 };
 
 function buildDetailRows(results: CoverageResult[]): DetailRow[] {
-  return results.flatMap((result, resultIndex) => {
+  return results.flatMap<DetailRow>((result, resultIndex) => {
     if (result.eventName !== "公共事件属性") {
       return [{ ...result, rowKey: `${resultIndex}:${result.eventName}`, sourceEventName: result.eventName }];
     }
 
-    if (result.missingProperties.length <= 1) {
+    if (result.missingProperties.length === 0) {
       return [{
         ...result,
         rowKey: `${resultIndex}:${result.eventName}`,
         sourceEventName: result.eventName,
-        status: result.missingProperties.length === 1 ? "公共事件缺失" : result.status,
+        status: result.status,
       }];
     }
 
@@ -58,6 +78,10 @@ function buildDetailRows(results: CoverageResult[]): DetailRow[] {
       expectedProperties: [missingProperty.split("：")[0]],
       coveredProperties: [],
       missingProperties: [missingProperty],
+      detailCoveredProperties: [],
+      detailMissingProperties: [],
+      passedProperties: [],
+      passRate: 0,
       status: "公共事件缺失",
     }));
   });
@@ -103,6 +127,7 @@ export default function App() {
         result.expectedProperties.join(" "),
         result.coveredProperties.join(" "),
         result.missingProperties.join(" "),
+        result.detailMissingProperties.join(" "),
         result.notes,
       ]
         .join(" ")
@@ -362,18 +387,18 @@ export default function App() {
         </div>
 
         <div className="metric-grid">
-          <Metric label="事件覆盖率" value={report ? `${Math.round(report.summary.eventCoverageRate * 100)}%` : "-"} />
-          <Metric label="属性覆盖率" value={report ? `${Math.round(report.summary.propertyCoverageRate * 100)}%` : "-"} />
+          <Metric label="事件覆盖率" value={report ? formatPercent(report.summary.eventCoverageRate) : "-"} />
           <Metric label="事件缺失" value={report?.summary.missingEvents ?? "-"} />
+          <Metric label="属性覆盖率" value={report ? formatPercent(report.summary.propertyCoverageRate) : "-"} />
           <Metric label="属性缺失" value={report?.summary.propertyMissingEvents ?? "-"} />
-          <Metric label="属性值异常" value={report?.summary.valueIssueEvents ?? "-"} />
-          <Metric label="已覆盖" value={report?.summary.coveredEvents ?? "-"} />
+          <Metric label="详情覆盖率" value={report ? formatPercent(report.summary.detailCoverageRate) : "-"} />
+          <Metric label="详情缺失" value={report?.summary.detailMissingEvents ?? "-"} />
         </div>
       </section>
 
       <section className="panel detail-panel">
         <div className="panel-title-row">
-          <h2>事件明细</h2>
+          <h2>数据明细</h2>
           <div className="toolbar">
             <div className="status-filter" aria-label="状态筛选">
               {statusOptions.map((option) => (
@@ -408,7 +433,7 @@ export default function App() {
                 <th>触发次数</th>
                 <th>预期属性</th>
                 <th>已覆盖属性</th>
-                <th>缺失属性/事件</th>
+                <th>通过率</th>
               </tr>
             </thead>
             <tbody key={`${statusFilter}:${query}:${filteredResults.length}`}>
@@ -428,9 +453,26 @@ export default function App() {
                       <code>{result.eventName}</code>
                     </td>
                     <td className="count-cell">{result.triggerCount ?? "-"}</td>
-                    <td>{result.expectedProperties.join(", ") || "-"}</td>
-                    <td>{result.coveredProperties.join(", ") || "-"}</td>
-                    <td className="missing-cell">{renderMissingDetails(result)}</td>
+                    <td>{renderPropertyLines(result.expectedProperties)}</td>
+                    <td>{renderCoveredPropertyLines(result)}</td>
+                    <td className="rate-cell">
+                      <strong>{formatPercent(result.passRate)}</strong>
+                      {(result.status === "公共事件缺失" ||
+                        result.missingProperties.length > 0 ||
+                        result.detailMissingProperties.length > 0) && (
+                        <span className="rate-detail">
+                          {result.status === "公共事件缺失" && (
+                            <span>缺失事件：{renderMissingDetails(result)}</span>
+                          )}
+                          {result.status !== "公共事件缺失" && result.missingProperties.length > 0 && (
+                            <span>属性缺失：{renderPropertyLines(result.missingProperties, "property-fail")}</span>
+                          )}
+                          {result.detailMissingProperties.length > 0 && (
+                            <span>详情缺失：{renderPropertyLines(result.detailMissingProperties, "property-fail")}</span>
+                          )}
+                        </span>
+                      )}
+                    </td>
                   </tr>
                 ))
               )}
@@ -444,7 +486,7 @@ export default function App() {
           <h2>缺失清单</h2>
           <div className="missing-list">
             {detailRows
-              .filter((result) => result.status !== "已覆盖")
+              .filter((result) => result.status !== "测试通过")
               .map((result) => (
                 <div className={`missing-item missing-item-${result.status}`} key={result.rowKey}>
                   <strong>
@@ -453,20 +495,22 @@ export default function App() {
                   <span>
                     {result.status === "事件缺失"
                       ? "实际数据中没有该事件"
-                      : result.status === "属性值异常"
-                        ? `异常值：${result.valueIssues
-                            .map((issue) => `${issue.propertyName}=${issue.actualValues.join(",")}`)
-                            .join("；")}`
-                        : (
-                            <>
-                              {result.status === "公共事件缺失" ? "缺失事件：" : "缺失属性："}
-                              {renderMissingDetails(result)}
-                            </>
-                          )}
+                      : (
+                          <>
+                            {result.status === "公共事件缺失"
+                              ? "缺失事件："
+                              : result.status === "详情缺失"
+                                ? "详情缺失："
+                                : "缺失属性："}
+                            {result.status === "详情缺失"
+                              ? renderPropertyLines(result.detailMissingProperties)
+                              : renderMissingDetails(result)}
+                          </>
+                        )}
                   </span>
                 </div>
               ))}
-            {report.results.every((result) => result.status === "已覆盖") && (
+            {report.results.every((result) => result.status === "测试通过") && (
               <p className="hint">当前结果没有缺失项。</p>
             )}
           </div>

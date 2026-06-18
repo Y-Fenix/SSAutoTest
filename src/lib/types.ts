@@ -25,7 +25,7 @@ export interface ActualEventSummary {
   rows: RawRow[];
 }
 
-export type CoverageStatus = "已覆盖" | "属性缺失" | "事件缺失" | "属性值异常";
+export type CoverageStatus = "测试通过" | "属性缺失" | "详情缺失" | "事件缺失";
 
 export interface ValueIssue {
   propertyName: string;
@@ -41,10 +41,14 @@ export interface CoverageResult {
   expectedProperties: string[];
   coveredProperties: string[];
   missingProperties: string[];
+  detailCoveredProperties: string[];
+  detailMissingProperties: string[];
+  passedProperties: string[];
   propertyDetails: Record<string, string>;
   valueIssues: ValueIssue[];
   status: CoverageStatus;
   triggerCount: number | null;
+  passRate: number;
   notes: string;
 }
 
@@ -53,12 +57,16 @@ export interface CoverageSummary {
   coveredEvents: number;
   missingEvents: number;
   propertyMissingEvents: number;
-  valueIssueEvents: number;
+  detailMissingEvents: number;
   totalProperties: number;
   coveredProperties: number;
   missingProperties: number;
+  totalDetailProperties: number;
+  coveredDetailProperties: number;
+  missingDetailProperties: number;
   eventCoverageRate: number;
   propertyCoverageRate: number;
+  detailCoverageRate: number;
 }
 
 export interface CoverageReport {

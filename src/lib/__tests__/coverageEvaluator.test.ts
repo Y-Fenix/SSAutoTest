@@ -48,7 +48,7 @@ describe("evaluateCoverage", () => {
     const report = evaluateCoverage(expectedEvents, actualEvents);
 
     expect(report.results.map((result) => [result.eventName, result.status])).toEqual([
-      ["level_start", "已覆盖"],
+      ["level_start", "测试通过"],
       ["common_ad_event", "属性缺失"],
       ["ta_app_end", "事件缺失"],
     ]);
@@ -81,7 +81,7 @@ describe("evaluateCoverage", () => {
 
     expect(report.results[0].coveredProperties).toEqual(["level_type", "level_id"]);
     expect(report.results[0].missingProperties).toEqual([]);
-    expect(report.results[0].status).toBe("已覆盖");
+    expect(report.results[0].status).toBe("测试通过");
   });
 
   it("marks a property missing when the export column exists but all values are empty for that event", () => {
@@ -138,7 +138,48 @@ describe("evaluateCoverage", () => {
     ]);
   });
 
-  it("ignores property detail values when event and property names match", () => {
+  it("reports detail coverage when actual values match expected property details", () => {
+    const actualEvents = parseActualDataRows([
+      { event_name: "common_ad_event", action: "load", revenue: "0.01" },
+    ]);
+    const report = evaluateCoverage(
+      [
+        {
+          eventTag: "广告点位",
+          eventName: "common_ad_event",
+          triggerDescription: "",
+          properties: [
+            {
+              propertyName: "action",
+              valueType: "字符串",
+              description: "广告步骤",
+              propertyDetail: "request,load,revenue",
+              remark: "",
+            },
+            {
+              propertyName: "revenue",
+              valueType: "数值",
+              description: "",
+              propertyDetail: "",
+              remark: "",
+            },
+          ],
+          notes: "",
+          testResult: "",
+        },
+      ],
+      actualEvents,
+    );
+
+    expect(report.results[0].status).toBe("测试通过");
+    expect(report.results[0].detailCoveredProperties).toEqual(["action"]);
+    expect(report.results[0].detailMissingProperties).toEqual([]);
+    expect(report.results[0].passRate).toBe(1);
+    expect(report.summary.detailMissingEvents).toBe(0);
+    expect(report.summary.detailCoverageRate).toBe(1);
+  });
+
+  it("reports detail missing when property exists but no value matches expected details", () => {
     const actualEvents = parseActualDataRows([
       { event_name: "common_ad_event", action: "loaded", revenue: "0.01" },
     ]);
@@ -171,9 +212,13 @@ describe("evaluateCoverage", () => {
       actualEvents,
     );
 
-    expect(report.results[0].status).toBe("已覆盖");
-    expect(report.results[0].valueIssues).toEqual([]);
-    expect(report.summary.valueIssueEvents).toBe(0);
+    expect(report.results[0].status).toBe("详情缺失");
+    expect(report.results[0].coveredProperties).toEqual(["action", "revenue"]);
+    expect(report.results[0].detailMissingProperties).toEqual(["action"]);
+    expect(report.results[0].passedProperties).toEqual(["revenue"]);
+    expect(report.results[0].passRate).toBe(0.5);
+    expect(report.summary.detailMissingEvents).toBe(1);
+    expect(report.summary.detailCoverageRate).toBe(0);
   });
 
   it("covers common_ad_event scene when reward_scene has any non-empty value", () => {
@@ -198,7 +243,7 @@ describe("evaluateCoverage", () => {
 
     expect(report.results[0].coveredProperties).toEqual(["scene"]);
     expect(report.results[0].missingProperties).toEqual([]);
-    expect(report.results[0].status).toBe("已覆盖");
+    expect(report.results[0].status).toBe("测试通过");
   });
 
   it("covers common_ad_event scene when scence has any non-empty value", () => {
@@ -223,7 +268,7 @@ describe("evaluateCoverage", () => {
 
     expect(report.results[0].coveredProperties).toEqual(["scene"]);
     expect(report.results[0].missingProperties).toEqual([]);
-    expect(report.results[0].status).toBe("已覆盖");
+    expect(report.results[0].status).toBe("测试通过");
   });
 
   it("does not use common_ad_event scene aliases for other events", () => {

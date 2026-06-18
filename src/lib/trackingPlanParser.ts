@@ -7,7 +7,7 @@ const HEADER_ALIASES = {
   propertyName: ["属性名", "property", "property_name"],
   valueType: ["属性值类型", "值类型", "type"],
   propertyDescription: ["属性说明", "property_description"],
-  remark1: ["备注1", "规则", "预期规则"],
+  remark1: ["属性详情", "备注1", "规则", "预期规则"],
   remark: ["备注", "notes"],
   testResult: ["测试结果1.0.5", "测试结果", "test_result"],
 };
@@ -73,7 +73,7 @@ function makeCommonProperty(row: RawRow): ExpectedProperty | null {
     propertyName,
     valueType: stringValue(row, ["属性类型（必填）", "属性类型", "属性显示名", "值类型", "type"]),
     description: stringValue(row, ["属性说明", "property_description"]),
-    propertyDetail: "",
+    propertyDetail: stringValue(row, ["属性详情", "备注1", "规则", "预期规则"]),
     remark: stringValue(row, ["上报调整", "备注", "notes"]),
   };
 }
@@ -82,6 +82,7 @@ export function parseTrackingPlanRows(rows: RawRow[]): ExpectedEvent[] {
   validateHeaders(rows);
 
   const events: ExpectedEvent[] = [];
+  const eventByName = new Map<string, ExpectedEvent>();
   const commonProperties: ExpectedProperty[] = [];
   let currentEvent: ExpectedEvent | null = null;
 
@@ -96,17 +97,21 @@ export function parseTrackingPlanRows(rows: RawRow[]): ExpectedEvent[] {
 
     const eventName = stringValue(row, HEADER_ALIASES.eventName);
     if (eventName) {
-      currentEvent = {
-        eventTag: stringValue(row, HEADER_ALIASES.eventTag),
-        eventName,
-        triggerDescription: stringValue(row, HEADER_ALIASES.triggerDescription),
-        properties: [],
-        notes: [stringValue(row, HEADER_ALIASES.remark1), stringValue(row, HEADER_ALIASES.remark)]
-          .filter(Boolean)
-          .join(" / "),
-        testResult: stringValue(row, HEADER_ALIASES.testResult),
-      };
-      events.push(currentEvent);
+      currentEvent = eventByName.get(eventName) ?? null;
+      if (!currentEvent) {
+        currentEvent = {
+          eventTag: stringValue(row, HEADER_ALIASES.eventTag),
+          eventName,
+          triggerDescription: stringValue(row, HEADER_ALIASES.triggerDescription),
+          properties: [],
+          notes: [stringValue(row, HEADER_ALIASES.remark1), stringValue(row, HEADER_ALIASES.remark)]
+            .filter(Boolean)
+            .join(" / "),
+          testResult: stringValue(row, HEADER_ALIASES.testResult),
+        };
+        eventByName.set(eventName, currentEvent);
+        events.push(currentEvent);
+      }
     }
 
     if (!eventName && !currentEvent) {

@@ -17,6 +17,60 @@ function hasAnyNonEmptyValue(actual: ActualEventSummary, propertyName: string): 
   });
 }
 
+function normalizeDetailValue(value: string): string {
+  return value.trim().toLowerCase();
+}
+
+function splitExpectedDetails(detail: string): string[] {
+  return detail
+    .split(/[\n\r,，;；、]+/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function matchesRule(value: string, rule: string): boolean {
+  const normalizedValue = value.trim();
+  const normalizedRule = rule.trim().toLowerCase();
+  if (!normalizedRule) return true;
+  if (normalizedRule === "string") return normalizedValue.length > 0;
+  if (normalizedRule === "string_or_empty") return true;
+  if (normalizedRule === "url_string") return /^https?:\/\//i.test(normalizedValue) || normalizedValue.includes(".");
+  if (normalizedRule === "int>=0") {
+    const numberValue = Number(normalizedValue);
+    return Number.isInteger(numberValue) && numberValue >= 0;
+  }
+  if (normalizedRule === "int") return Number.isInteger(Number(normalizedValue));
+  if (normalizedRule === "float" || normalizedRule === "number") return Number.isFinite(Number(normalizedValue));
+  if (normalizedRule.includes("<int>")) return normalizedValue.length > 0;
+  if (normalizedRule.includes("<tag>") || normalizedRule.includes("<eventname>")) return normalizedValue.length > 0;
+  return false;
+}
+
+function hasExpectedDetailValue(actual: ActualEventSummary, propertyName: string, expectedDetail: string): boolean {
+  const expectedItems = splitExpectedDetails(expectedDetail);
+  if (expectedItems.length === 0) return hasAnyNonEmptyValue(actual, propertyName);
+
+  const candidates = getActualPropertyCandidates(actual.eventName, propertyName);
+  return actual.rows.some((row) =>
+    candidates.some((candidate) => {
+      const rawValue = row[candidate];
+      if (rawValue === undefined || rawValue === null) return false;
+      const actualValue = String(rawValue).trim();
+      if (!actualValue) return false;
+      const normalizedActual = normalizeDetailValue(actualValue);
+      return expectedItems.some((expectedItem) => {
+        if (matchesRule(actualValue, expectedItem)) return true;
+        return normalizeDetailValue(expectedItem) === normalizedActual;
+      });
+    }),
+  );
+}
+
+function makePassRate(passedProperties: string[], expectedProperties: string[]): number {
+  if (expectedProperties.length === 0) return 1;
+  return passedProperties.length / expectedProperties.length;
+}
+
 export function evaluateCoverage(
   expectedEvents: ExpectedEvent[],
   actualEvents: Map<string, ActualEventSummary>,
@@ -42,6 +96,7 @@ export function evaluateCoverage(
       const coveredProperties = expectedProperties.filter(
         (propertyName) => !uncoveredCommonProperties.has(propertyName),
       );
+      const passRate = makePassRate(coveredProperties, expectedProperties);
 
       return {
         eventTag: event.eventTag,
@@ -51,10 +106,14 @@ export function evaluateCoverage(
         expectedProperties,
         coveredProperties,
         missingProperties,
+        detailCoveredProperties: [],
+        detailMissingProperties: [],
+        passedProperties: coveredProperties,
         propertyDetails: {},
         valueIssues: [],
-        status: missingProperties.length > 0 ? "属性缺失" : "已覆盖",
+        status: missingProperties.length > 0 ? "属性缺失" : "测试通过",
         triggerCount: null,
+        passRate,
         notes: event.notes,
       };
     }
@@ -74,16 +133,32 @@ export function evaluateCoverage(
         expectedProperties,
         coveredProperties: [],
         missingProperties: expectedProperties,
+        detailCoveredProperties: [],
+        detailMissingProperties: [],
+        passedProperties: [],
         propertyDetails,
         valueIssues: [],
         status: "事件缺失",
         triggerCount: null,
+        passRate: 0,
         notes: event.notes,
       };
     }
 
     const coveredProperties = expectedProperties.filter((propertyName) => hasAnyNonEmptyValue(actual, propertyName));
     const missingProperties = expectedProperties.filter((propertyName) => !hasAnyNonEmptyValue(actual, propertyName));
+    const propertiesWithDetails = event.properties.filter((property) => property.propertyDetail.trim());
+    const detailCoveredProperties = propertiesWithDetails
+      .filter((property) => hasExpectedDetailValue(actual, property.propertyName, property.propertyDetail))
+      .map((property) => property.propertyName);
+    const detailMissingProperties = propertiesWithDetails
+      .filter((property) => !hasExpectedDetailValue(actual, property.propertyName, property.propertyDetail))
+      .map((property) => property.propertyName);
+    const passedProperties = expectedProperties.filter(
+      (propertyName) => coveredProperties.includes(propertyName) && !detailMissingProperties.includes(propertyName),
+    );
+    const status =
+      missingProperties.length > 0 ? "属性缺失" : detailMissingProperties.length > 0 ? "详情缺失" : "测试通过";
 
     return {
       eventTag: event.eventTag,
@@ -93,10 +168,14 @@ export function evaluateCoverage(
       expectedProperties,
       coveredProperties,
       missingProperties,
+      detailCoveredProperties,
+      detailMissingProperties,
+      passedProperties,
       propertyDetails,
       valueIssues: [],
-      status: missingProperties.length > 0 ? "属性缺失" : "已覆盖",
+      status,
       triggerCount: actual.rows.length,
+      passRate: makePassRate(passedProperties, expectedProperties),
       notes: event.notes,
     };
   });
@@ -110,7 +189,15 @@ export function evaluateCoverage(
     0,
   );
   const expectedEventNames = new Set(expectedEvents.map((event) => event.eventName));
-  const coveredEventCount = results.filter((result) => result.status === "已覆盖").length;
+  const coveredEventCount = results.filter((result) => result.status === "测试通过").length;
+  const totalDetailProperties = results.reduce(
+    (sum, result) => sum + Object.values(result.propertyDetails).filter((detail) => detail.trim()).length,
+    0,
+  );
+  const coveredDetailProperties = results.reduce(
+    (sum, result) => sum + result.detailCoveredProperties.length,
+    0,
+  );
 
   return {
     results,
@@ -119,12 +206,16 @@ export function evaluateCoverage(
       coveredEvents: coveredEventCount,
       missingEvents: results.filter((result) => result.status === "事件缺失").length,
       propertyMissingEvents: results.filter((result) => result.status === "属性缺失").length,
-      valueIssueEvents: results.filter((result) => result.status === "属性值异常").length,
+      detailMissingEvents: results.filter((result) => result.status === "详情缺失").length,
       totalProperties,
       coveredProperties,
       missingProperties: totalProperties - coveredProperties,
+      totalDetailProperties,
+      coveredDetailProperties,
+      missingDetailProperties: totalDetailProperties - coveredDetailProperties,
       eventCoverageRate: results.length === 0 ? 0 : coveredEventCount / results.length,
       propertyCoverageRate: totalProperties === 0 ? 1 : coveredProperties / totalProperties,
+      detailCoverageRate: totalDetailProperties === 0 ? 1 : coveredDetailProperties / totalDetailProperties,
     },
     extraEvents: [...actualEvents.keys()]
       .filter((eventName) => !expectedEventNames.has(eventName))

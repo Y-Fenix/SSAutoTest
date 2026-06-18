@@ -471,7 +471,7 @@ code {
   white-space: nowrap;
 }
 
-.status-已覆盖 {
+.status-测试通过 {
   background: #e8f7ef;
   color: #167346;
 }
@@ -481,7 +481,7 @@ code {
   color: #9a5d00;
 }
 
-.status-属性值异常 {
+.status-详情缺失 {
   background: #fff0f6;
   color: #9d174d;
 }
@@ -501,6 +501,21 @@ code {
   font-weight: 700;
 }
 
+.rate-cell strong {
+  display: block;
+  color: #334155;
+  font-size: 14px;
+  margin-bottom: 4px;
+}
+
+.rate-detail {
+  display: grid;
+  gap: 6px;
+  color: #667085;
+  font-size: 12px;
+  font-weight: 700;
+}
+
 .count-cell {
   color: #334155;
   font-variant-numeric: tabular-nums;
@@ -514,6 +529,16 @@ code {
 
 .property-lines span {
   overflow-wrap: anywhere;
+}
+
+.property-pass {
+  color: #167346;
+  font-weight: 700;
+}
+
+.property-fail {
+  color: #b42318;
+  font-weight: 700;
 }
 
 .empty-cell {
@@ -550,6 +575,11 @@ code {
 .missing-item-属性缺失 {
   border-left-color: #f59e0b;
   background: #fffaf0;
+}
+
+.missing-item-详情缺失 {
+  border-left-color: #f472b6;
+  background: #fff0f6;
 }
 
 .missing-item span {
