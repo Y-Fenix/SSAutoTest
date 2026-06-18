@@ -203,8 +203,9 @@ export default function App() {
     detailRows.forEach((result) => {
       counts[result.status] += 1;
     });
+    counts["详情缺失"] = report?.summary.detailMissingEvents ?? counts["详情缺失"];
     return counts;
-  }, [detailRows]);
+  }, [detailRows, report]);
 
   function handleExpectedRows(rows: RawRow[]) {
     const events = parseTrackingPlanRows(rows);
@@ -446,11 +447,8 @@ export default function App() {
 
         <div className="metric-grid">
           <Metric label="事件覆盖率" value={report ? formatPercent(report.summary.eventCoverageRate) : "-"} />
-          <Metric label="事件缺失" value={report?.summary.missingEvents ?? "-"} />
           <Metric label="属性覆盖率" value={report ? formatPercent(report.summary.propertyCoverageRate) : "-"} />
-          <Metric label="属性缺失" value={report?.summary.propertyMissingEvents ?? "-"} />
           <Metric label="详情覆盖率" value={report ? formatPercent(report.summary.detailCoverageRate) : "-"} />
-          <Metric label="详情缺失" value={report?.summary.detailMissingEvents ?? "-"} />
         </div>
       </section>
 
