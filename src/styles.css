@@ -579,15 +579,11 @@ code {
 }
 
 .detail-row-pass td {
-  background: #f2fbf6;
-  color: #167346;
-  font-weight: 700;
+  background: #ffffff;
 }
 
 .detail-row-fail td {
-  background: #fff5f5;
-  color: #b42318;
-  font-weight: 700;
+  background: #ffffff;
 }
 
 .detail-value-lines {
