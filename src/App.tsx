@@ -33,9 +33,9 @@ function renderCoveredPropertyLines(result: DetailRow) {
   return (
     <span className="property-lines">
       {result.expectedProperties.map((propertyName) => {
-        const isCovered = result.coveredProperties.includes(propertyName);
+        const isPassed = result.passedProperties.includes(propertyName);
         return (
-          <span className={isCovered ? "property-pass" : "property-fail"} key={propertyName}>
+          <span className={isPassed ? "property-pass" : "property-fail"} key={propertyName}>
             {propertyName}
           </span>
         );
@@ -457,21 +457,6 @@ export default function App() {
                     <td>{renderCoveredPropertyLines(result)}</td>
                     <td className="rate-cell">
                       <strong>{formatPercent(result.passRate)}</strong>
-                      {(result.status === "公共事件缺失" ||
-                        result.missingProperties.length > 0 ||
-                        result.detailMissingProperties.length > 0) && (
-                        <span className="rate-detail">
-                          {result.status === "公共事件缺失" && (
-                            <span>缺失事件：{renderMissingDetails(result)}</span>
-                          )}
-                          {result.status !== "公共事件缺失" && result.missingProperties.length > 0 && (
-                            <span>属性缺失：{renderPropertyLines(result.missingProperties, "property-fail")}</span>
-                          )}
-                          {result.detailMissingProperties.length > 0 && (
-                            <span>详情缺失：{renderPropertyLines(result.detailMissingProperties, "property-fail")}</span>
-                          )}
-                        </span>
-                      )}
                     </td>
                   </tr>
                 ))

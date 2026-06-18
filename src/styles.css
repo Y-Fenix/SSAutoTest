@@ -508,14 +508,6 @@ code {
   margin-bottom: 4px;
 }
 
-.rate-detail {
-  display: grid;
-  gap: 6px;
-  color: #667085;
-  font-size: 12px;
-  font-weight: 700;
-}
-
 .count-cell {
   color: #334155;
   font-variant-numeric: tabular-nums;
