@@ -579,7 +579,7 @@ export default function App() {
                   <th>事件名</th>
                   <th>触发次数</th>
                   <th>预期属性</th>
-                  <th>已覆盖属性</th>
+                  <th>{statusFilter === "公共事件缺失" ? "问题事件" : "已覆盖属性"}</th>
                   <th>通过率</th>
                 </tr>
               </thead>
