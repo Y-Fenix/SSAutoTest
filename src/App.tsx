@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { detectEventNameColumn, parseActualDataRows } from "./lib/actualDataParser";
 import { evaluateCoverage } from "./lib/coverageEvaluator";
 import { coverageResultsToCsv, downloadCsv } from "./lib/exporter";
@@ -113,6 +113,7 @@ function buildDetailRows(results: CoverageResult[]): DetailRow[] {
 }
 
 export default function App() {
+  const detailPanelRef = useRef<HTMLElement | null>(null);
   const [expectedEvents, setExpectedEvents] = useState<ExpectedEvent[]>([]);
   const [actualRows, setActualRows] = useState<RawRow[]>([]);
   const [actualColumns, setActualColumns] = useState<string[]>([]);
@@ -279,6 +280,13 @@ export default function App() {
     setSelectedLarkSheetIds((current) =>
       current.includes(sheetId) ? current.filter((id) => id !== sheetId) : [...current, sheetId],
     );
+  }
+
+  function handleStatusFilterChange(nextStatus: (typeof statusOptions)[number]) {
+    setStatusFilter(nextStatus);
+    window.requestAnimationFrame(() => {
+      detailPanelRef.current?.scrollIntoView({ block: "start" });
+    });
   }
 
   return (
@@ -452,7 +460,7 @@ export default function App() {
         </div>
       </section>
 
-      <section className="panel detail-panel">
+      <section className="panel detail-panel" ref={detailPanelRef}>
         <div className="panel-title-row">
           <h2>数据明细</h2>
           <div className="toolbar">
@@ -461,7 +469,7 @@ export default function App() {
                 <button
                   key={option}
                   className={statusFilter === option ? "active" : ""}
-                  onClick={() => setStatusFilter(option)}
+                  onClick={() => handleStatusFilterChange(option)}
                   type="button"
                 >
                   <span>{option}</span>
