@@ -465,6 +465,7 @@ code {
   min-width: 84px;
   justify-content: center;
   border-radius: 999px;
+  border: 1px solid transparent;
   padding: 4px 8px;
   font-weight: 700;
   font-size: 12px;
@@ -482,13 +483,15 @@ code {
 }
 
 .status-详情缺失 {
-  background: #fff0f6;
-  color: #9d174d;
+  border-color: #d8b4fe;
+  background: #f5f0ff;
+  color: #6d28d9;
 }
 
 .status-事件缺失 {
-  background: #fff1f1;
-  color: #ad2424;
+  border-color: #fecaca;
+  background: #fee2e2;
+  color: #b91c1c;
 }
 
 .status-公共事件缺失 {
