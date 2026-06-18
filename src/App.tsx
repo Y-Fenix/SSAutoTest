@@ -604,6 +604,15 @@ export default function App() {
           )}
         </section>
       )}
+      <button
+        aria-label="返回顶部"
+        className="back-to-top-button"
+        onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
+        title="返回顶部"
+        type="button"
+      >
+        ↑
+      </button>
     </main>
   );
 }
