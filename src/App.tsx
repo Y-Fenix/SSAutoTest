@@ -61,6 +61,20 @@ function renderPropertyDetail(detail: string) {
   );
 }
 
+function renderDetailCoverage(items: string[], coveredItems: string[]) {
+  if (items.length === 0) return "-";
+  const coveredSet = new Set(coveredItems);
+  return (
+    <span className="detail-value-lines">
+      {items.map((item) => (
+        <span className={coveredSet.has(item) ? "property-pass" : "property-fail"} key={item}>
+          {item}
+        </span>
+      ))}
+    </span>
+  );
+}
+
 type DetailRow = Omit<CoverageResult, "status"> & {
   rowKey: string;
   sourceEventName: string;
@@ -128,7 +142,7 @@ export default function App() {
 
   const detailRows = useMemo(() => buildDetailRows(report?.results ?? []), [report]);
   const propertyDetailRows = useMemo(() => {
-    return detailRows.filter((result) => result.status === "详情缺失").flatMap((result) =>
+    return detailRows.filter((result) => result.eventName !== "公共事件属性").flatMap((result) =>
       result.expectedProperties
         .filter((propertyName) => result.propertyDetails[propertyName]?.trim())
         .map((propertyName) => ({
@@ -136,9 +150,14 @@ export default function App() {
           eventName: result.eventName,
           propertyName,
           expectedDetail: result.propertyDetails[propertyName] ?? "",
-          coveredDetail: result.coveredDetails[propertyName] ?? [],
+          expectedDetailItems: result.propertyDetailItems[propertyName] ?? [],
+          coveredDetailItems: result.coveredDetailItems[propertyName] ?? [],
           isPassed: result.passedProperties.includes(propertyName),
-          passRate: result.passedProperties.includes(propertyName) ? 1 : 0,
+          passRate:
+            (result.propertyDetailItems[propertyName]?.length ?? 0) === 0
+              ? 1
+              : (result.coveredDetailItems[propertyName]?.length ?? 0) /
+                (result.propertyDetailItems[propertyName]?.length ?? 1),
         })),
     );
   }, [detailRows]);
@@ -165,7 +184,12 @@ export default function App() {
   const filteredPropertyDetailRows = useMemo(() => {
     const needle = query.trim().toLowerCase();
     return propertyDetailRows.filter((row) => {
-      const text = [row.eventName, row.propertyName, row.expectedDetail, row.coveredDetail.join(" ")].join(" ").toLowerCase();
+      const text = [
+        row.eventName,
+        row.propertyName,
+        row.expectedDetail,
+        row.coveredDetailItems.join(" "),
+      ].join(" ").toLowerCase();
       return text.includes(needle);
     });
   }, [propertyDetailRows, query]);
@@ -487,7 +511,7 @@ export default function App() {
                       </td>
                       <td>{row.propertyName}</td>
                       <td>{renderPropertyDetail(row.expectedDetail)}</td>
-                      <td>{renderPropertyLines(row.coveredDetail)}</td>
+                      <td>{renderDetailCoverage(row.expectedDetailItems, row.coveredDetailItems)}</td>
                       <td className="rate-cell">
                         <strong>{formatPercent(row.passRate)}</strong>
                       </td>

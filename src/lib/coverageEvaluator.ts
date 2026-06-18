@@ -47,7 +47,7 @@ function matchesRule(value: string, rule: string): boolean {
 }
 
 function hasExpectedDetailValue(actual: ActualEventSummary, propertyName: string, expectedDetail: string): boolean {
-  return getCoveredDetailValues(actual, propertyName, expectedDetail).length > 0;
+  return getCoveredDetailItems(actual, propertyName, expectedDetail).length > 0;
 }
 
 function getCoveredDetailValues(actual: ActualEventSummary, propertyName: string, expectedDetail: string): string[] {
@@ -71,6 +71,25 @@ function getCoveredDetailValues(actual: ActualEventSummary, propertyName: string
     });
   });
   return [...values].sort((a, b) => a.localeCompare(b));
+}
+
+function getCoveredDetailItems(actual: ActualEventSummary, propertyName: string, expectedDetail: string): string[] {
+  const expectedItems = splitExpectedDetails(expectedDetail);
+  if (expectedItems.length === 0) return [];
+
+  const candidates = getActualPropertyCandidates(actual.eventName, propertyName);
+  return expectedItems.filter((expectedItem) =>
+    actual.rows.some((row) =>
+      candidates.some((candidate) => {
+        const rawValue = row[candidate];
+        if (rawValue === undefined || rawValue === null) return false;
+        const actualValue = String(rawValue).trim();
+        if (!actualValue) return false;
+        if (matchesRule(actualValue, expectedItem)) return true;
+        return normalizeDetailValue(expectedItem) === normalizeDetailValue(actualValue);
+      }),
+    ),
+  );
 }
 
 function makePassRate(passedProperties: string[], expectedProperties: string[]): number {
@@ -117,7 +136,9 @@ export function evaluateCoverage(
         detailMissingProperties: [],
         passedProperties: coveredProperties,
         propertyDetails: {},
+        propertyDetailItems: {},
         coveredDetails: {},
+        coveredDetailItems: {},
         valueIssues: [],
         status: missingProperties.length > 0 ? "属性缺失" : "测试通过",
         triggerCount: null,
@@ -130,6 +151,9 @@ export function evaluateCoverage(
     const expectedProperties = event.properties.map((property) => property.propertyName);
     const propertyDetails = Object.fromEntries(
       event.properties.map((property) => [property.propertyName, property.propertyDetail]),
+    );
+    const propertyDetailItems = Object.fromEntries(
+      event.properties.map((property) => [property.propertyName, splitExpectedDetails(property.propertyDetail)]),
     );
 
     if (!actual) {
@@ -145,7 +169,9 @@ export function evaluateCoverage(
         detailMissingProperties: [],
         passedProperties: [],
         propertyDetails,
+        propertyDetailItems,
         coveredDetails: {},
+        coveredDetailItems: {},
         valueIssues: [],
         status: "事件缺失",
         triggerCount: null,
@@ -169,6 +195,12 @@ export function evaluateCoverage(
         getCoveredDetailValues(actual, property.propertyName, property.propertyDetail),
       ]),
     );
+    const coveredDetailItems = Object.fromEntries(
+      propertiesWithDetails.map((property) => [
+        property.propertyName,
+        getCoveredDetailItems(actual, property.propertyName, property.propertyDetail),
+      ]),
+    );
     const passedProperties = expectedProperties.filter(
       (propertyName) => coveredProperties.includes(propertyName) && !detailMissingProperties.includes(propertyName),
     );
@@ -187,7 +219,9 @@ export function evaluateCoverage(
       detailMissingProperties,
       passedProperties,
       propertyDetails,
+      propertyDetailItems,
       coveredDetails,
+      coveredDetailItems,
       valueIssues: [],
       status,
       triggerCount: actual.rows.length,

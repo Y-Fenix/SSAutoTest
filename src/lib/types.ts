@@ -45,7 +45,9 @@ export interface CoverageResult {
   detailMissingProperties: string[];
   passedProperties: string[];
   propertyDetails: Record<string, string>;
+  propertyDetailItems: Record<string, string[]>;
   coveredDetails: Record<string, string[]>;
+  coveredDetailItems: Record<string, string[]>;
   valueIssues: ValueIssue[];
   status: CoverageStatus;
   triggerCount: number | null;
