@@ -174,6 +174,7 @@ describe("evaluateCoverage", () => {
     expect(report.results[0].status).toBe("测试通过");
     expect(report.results[0].detailCoveredProperties).toEqual(["action"]);
     expect(report.results[0].detailMissingProperties).toEqual([]);
+    expect(report.results[0].coveredDetails).toEqual({ action: ["load"] });
     expect(report.results[0].passRate).toBe(1);
     expect(report.summary.detailMissingEvents).toBe(0);
     expect(report.summary.detailCoverageRate).toBe(1);
@@ -215,6 +216,7 @@ describe("evaluateCoverage", () => {
     expect(report.results[0].status).toBe("详情缺失");
     expect(report.results[0].coveredProperties).toEqual(["action", "revenue"]);
     expect(report.results[0].detailMissingProperties).toEqual(["action"]);
+    expect(report.results[0].coveredDetails).toEqual({ action: [] });
     expect(report.results[0].passedProperties).toEqual(["revenue"]);
     expect(report.results[0].passRate).toBe(0.5);
     expect(report.summary.detailMissingEvents).toBe(1);

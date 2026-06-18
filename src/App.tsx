@@ -128,15 +128,17 @@ export default function App() {
 
   const detailRows = useMemo(() => buildDetailRows(report?.results ?? []), [report]);
   const propertyDetailRows = useMemo(() => {
-    return detailRows.flatMap((result) =>
+    return detailRows.filter((result) => result.status === "详情缺失").flatMap((result) =>
       result.expectedProperties
         .filter((propertyName) => result.propertyDetails[propertyName]?.trim())
         .map((propertyName) => ({
           rowKey: `${result.rowKey}:detail:${propertyName}`,
           eventName: result.eventName,
           propertyName,
-          propertyDetail: result.propertyDetails[propertyName] ?? "",
+          expectedDetail: result.propertyDetails[propertyName] ?? "",
+          coveredDetail: result.coveredDetails[propertyName] ?? [],
           isPassed: result.passedProperties.includes(propertyName),
+          passRate: result.passedProperties.includes(propertyName) ? 1 : 0,
         })),
     );
   }, [detailRows]);
@@ -163,7 +165,7 @@ export default function App() {
   const filteredPropertyDetailRows = useMemo(() => {
     const needle = query.trim().toLowerCase();
     return propertyDetailRows.filter((row) => {
-      const text = [row.eventName, row.propertyName, row.propertyDetail].join(" ").toLowerCase();
+      const text = [row.eventName, row.propertyName, row.expectedDetail, row.coveredDetail.join(" ")].join(" ").toLowerCase();
       return text.includes(needle);
     });
   }, [propertyDetailRows, query]);
@@ -465,13 +467,15 @@ export default function App() {
                 <tr>
                   <th>事件名</th>
                   <th>属性名</th>
-                  <th>属性详情</th>
+                  <th>预期详情</th>
+                  <th>已覆盖详情</th>
+                  <th>通过率</th>
                 </tr>
               </thead>
               <tbody key={`detail:${query}:${filteredPropertyDetailRows.length}`}>
                 {filteredPropertyDetailRows.length === 0 ? (
                   <tr>
-                    <td colSpan={3} className="empty-cell">
+                    <td colSpan={5} className="empty-cell">
                       没有可展示的属性详情
                     </td>
                   </tr>
@@ -482,7 +486,11 @@ export default function App() {
                         <code>{row.eventName}</code>
                       </td>
                       <td>{row.propertyName}</td>
-                      <td>{renderPropertyDetail(row.propertyDetail)}</td>
+                      <td>{renderPropertyDetail(row.expectedDetail)}</td>
+                      <td>{renderPropertyLines(row.coveredDetail)}</td>
+                      <td className="rate-cell">
+                        <strong>{formatPercent(row.passRate)}</strong>
+                      </td>
                     </tr>
                   ))
                 )}
