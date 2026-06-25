@@ -29,8 +29,29 @@ export interface ShushuQueryResponse {
   rowCount: number;
 }
 
+export interface ShushuQueryStartResponse {
+  taskId: string;
+  sql: string;
+}
+
+export interface ShushuTaskInfo {
+  taskId: string;
+  status: string;
+  progress: number;
+  rowCount: number;
+  pageCount: number;
+  columns: string[];
+  errorMessage: string;
+}
+
+export interface ShushuResultPageResponse {
+  rows: RawRow[];
+  columns: string[];
+  pageId: number;
+}
+
 const identifierPattern = /^[#A-Za-z_$][#A-Za-z0-9_$]*$/;
-const tablePattern = /^[A-Za-z_][A-Za-z0-9_]*$/;
+const tablePattern = /^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)?$/;
 
 function requireSafeIdentifier(value: string, label: string): string {
   const trimmed = value.trim();
@@ -43,7 +64,7 @@ function requireSafeIdentifier(value: string, label: string): string {
 function requireSafeTable(value: string): string {
   const trimmed = value.trim();
   if (!tablePattern.test(trimmed)) {
-    throw new Error("事件表名只能包含字母、数字、下划线，且不能包含空格或 SQL 片段。");
+    throw new Error("事件表名只能包含字母、数字、下划线和一个库名前缀点号，且不能包含空格或 SQL 片段。");
   }
   return trimmed;
 }
@@ -163,6 +184,53 @@ function rowsFromPayload(payload: Record<string, unknown>): unknown[] {
   if (Array.isArray(payload.rows)) return payload.rows;
   if (Array.isArray(payload.result)) return payload.result;
   return [];
+}
+
+function objectFromPayload(payload: Record<string, unknown>): Record<string, unknown> {
+  if (payload.data && typeof payload.data === "object" && !Array.isArray(payload.data)) {
+    return payload.data as Record<string, unknown>;
+  }
+  return payload;
+}
+
+export function extractShushuTaskId(payload: Record<string, unknown>): string {
+  const data = objectFromPayload(payload);
+  return String(
+    payload.taskId ??
+      payload.task_id ??
+      data.taskId ??
+      data.task_id ??
+      data.id ??
+      "",
+  ).trim();
+}
+
+function normalizeProgress(value: unknown): number {
+  const raw = Number(value);
+  if (!Number.isFinite(raw)) return 0;
+  return raw > 1 ? Math.min(Math.round(raw), 100) : Math.min(Math.round(raw * 100), 100);
+}
+
+export function normalizeShushuTaskInfo(payload: Record<string, unknown>): ShushuTaskInfo {
+  const data = objectFromPayload(payload);
+  const resultStat =
+    data.resultStat && typeof data.resultStat === "object"
+      ? data.resultStat as Record<string, unknown>
+      : data.result_stat && typeof data.result_stat === "object"
+        ? data.result_stat as Record<string, unknown>
+        : {};
+  const columns = headersFromPayload(resultStat).length > 0
+    ? headersFromPayload(resultStat)
+    : headersFromPayload(data);
+  return {
+    taskId: extractShushuTaskId(payload),
+    status: String(data.status ?? data.taskStatus ?? data.state ?? payload.status ?? ""),
+    progress: normalizeProgress(data.progress ?? data.process ?? payload.progress),
+    rowCount: Number(resultStat.rowCount ?? resultStat.row_count ?? data.rowCount ?? data.row_count ?? 0) || 0,
+    pageCount: Number(resultStat.pageCount ?? resultStat.page_count ?? data.pageCount ?? data.page_count ?? 0) || 0,
+    columns,
+    errorMessage: String(data.errorMessage ?? data.error_message ?? data.message ?? payload.message ?? ""),
+  };
 }
 
 export function normalizeShushuPayload(payload: Record<string, unknown>, fallbackHeaders: string[] = []): {

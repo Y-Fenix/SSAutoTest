@@ -8,8 +8,10 @@ import { defineConfig, type Plugin } from "vite";
 import { extractSheets, extractValues, rowsFromValues, toSheetTabs } from "./src/lib/larkSheetServerUtils";
 import {
   buildShushuSql,
+  extractShushuTaskId,
   normalizeShushuPayload,
   normalizeShushuQueryConfig,
+  normalizeShushuTaskInfo,
   parseShushuResultPageText,
   type ShushuProjectOption,
 } from "./src/lib/shushuQuery";
@@ -193,6 +195,15 @@ function jsonResponse(res: any, statusCode: number, payload: unknown) {
   res.end(JSON.stringify(payload));
 }
 
+function friendlyShushuHttpError(status: number, text: string) {
+  if (status === 504) {
+    return "数数 SQL 查询超时：当前查询数据量太大或执行太久。建议先缩小日期范围、指定用户 ID，或把分页行数调小后重试。";
+  }
+  return text.includes("<html")
+    ? `数数接口请求失败(${status})：接口返回了 HTML 页面，请检查 API 地址和接口网关。`
+    : `数数接口请求失败(${status})：${text.slice(0, 500)}`;
+}
+
 async function postShushuJson(apiBaseUrl: string, pathName: string, params: Record<string, unknown>) {
   const url = new URL(`${apiBaseUrl}${pathName}`);
   Object.entries(params).forEach(([key, value]) => {
@@ -212,7 +223,41 @@ async function postShushuJson(apiBaseUrl: string, pathName: string, params: Reco
     payload = { rawText: text };
   }
   if (!response.ok) {
-    throw new Error(`数数接口请求失败(${response.status})：${text.slice(0, 500)}`);
+    throw new Error(friendlyShushuHttpError(response.status, text));
+  }
+  return payload;
+}
+
+function buildSqlRequestBody(params: { sql: string; pageSize: number }) {
+  const body = new URLSearchParams();
+  body.set("sql", params.sql);
+  body.set("pageSize", String(params.pageSize));
+  body.set("format", "json_object");
+  body.set("timeoutSeconds", "60");
+  return body;
+}
+
+async function submitShushuSql(apiBaseUrl: string, params: {
+  token: string;
+  sql: string;
+  pageSize: number;
+}) {
+  const url = new URL(`${apiBaseUrl}/open/submit-sql`);
+  url.searchParams.set("token", params.token);
+  const response = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: buildSqlRequestBody(params),
+  });
+  const text = await response.text();
+  let payload: Record<string, unknown>;
+  try {
+    payload = JSON.parse(text) as Record<string, unknown>;
+  } catch {
+    payload = { rawText: text };
+  }
+  if (!response.ok) {
+    throw new Error(friendlyShushuHttpError(response.status, text));
   }
   return payload;
 }
@@ -224,15 +269,10 @@ async function executeShushuSql(apiBaseUrl: string, params: {
 }) {
   const url = new URL(`${apiBaseUrl}/open/execute-sql`);
   url.searchParams.set("token", params.token);
-  const body = new URLSearchParams();
-  body.set("sql", params.sql);
-  body.set("pageSize", String(params.pageSize));
-  body.set("format", "json_object");
-  body.set("timeoutSeconds", "60");
   const response = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body,
+    body: buildSqlRequestBody(params),
   });
   const text = await response.text();
   let payload: Record<string, unknown>;
@@ -242,15 +282,9 @@ async function executeShushuSql(apiBaseUrl: string, params: {
     payload = { rawText: text };
   }
   if (!response.ok) {
-    throw new Error(`数数 SQL 查询失败(${response.status})：${text.slice(0, 500)}`);
+    throw new Error(friendlyShushuHttpError(response.status, text));
   }
   return payload;
-}
-
-function wait(ms: number) {
-  return new Promise((resolve) => {
-    setTimeout(resolve, ms);
-  });
 }
 
 async function fetchShushuResultPage(apiBaseUrl: string, params: {
@@ -264,32 +298,23 @@ async function fetchShushuResultPage(apiBaseUrl: string, params: {
   url.searchParams.set("taskId", params.taskId);
   url.searchParams.set("pageId", String(params.pageId));
 
-  for (let attempt = 0; attempt < 10; attempt += 1) {
-    const response = await fetch(url, { method: "GET" });
-    const text = await response.text();
-    if (!response.ok) {
-      throw new Error(`数数分页结果读取失败(${response.status})：${text.slice(0, 500)}`);
-    }
-    try {
-      const payload = JSON.parse(text) as Record<string, unknown>;
-      if (!isSuccessPayload(payload)) {
-        const message = shushuErrorMessage(payload);
-        if (message.includes("running") && attempt < 9) {
-          await wait(1000);
-          continue;
-        }
-        throw new Error(message);
-      }
-    } catch (error) {
-      if (error instanceof SyntaxError) {
-        return parseShushuResultPageText(params.headers, text);
-      }
-      throw error;
-    }
-    return parseShushuResultPageText(params.headers, text);
+  const response = await fetch(url, { method: "GET" });
+  const text = await response.text();
+  if (!response.ok) {
+    throw new Error(friendlyShushuHttpError(response.status, text));
   }
-
-  throw new Error("数数查询任务仍在执行，请稍后重试。");
+  try {
+    const payload = JSON.parse(text) as Record<string, unknown>;
+    if (!isSuccessPayload(payload)) {
+      throw new Error(shushuErrorMessage(payload));
+    }
+  } catch (error) {
+    if (error instanceof SyntaxError) {
+      return parseShushuResultPageText(params.headers, text);
+    }
+    throw error;
+  }
+  return parseShushuResultPageText(params.headers, text);
 }
 
 function isSuccessPayload(payload: Record<string, unknown>) {
@@ -375,6 +400,55 @@ async function queryShushuRows(params: Record<string, unknown>) {
   return { rows, columns, sql, rowCount: Number(data.rowCount ?? rows.length) || rows.length };
 }
 
+async function startShushuQuery(params: Record<string, unknown>) {
+  const config = normalizeShushuQueryConfig(params);
+  if (!config.apiBaseUrl) throw new Error("请填写数数 API 地址。");
+  if (!config.token) throw new Error("请填写数数 OpenAPI Token。");
+  const sql = buildShushuSql(config);
+  const submitPayload = await submitShushuSql(config.apiBaseUrl, {
+    token: config.token,
+    sql,
+    pageSize: config.pageSize,
+  });
+  if (!isSuccessPayload(submitPayload)) throw new Error(shushuErrorMessage(submitPayload));
+  const taskId = extractShushuTaskId(submitPayload);
+  if (!taskId) {
+    throw new Error(`数数查询已提交，但未返回 taskId。原始返回：${JSON.stringify(submitPayload).slice(0, 500)}`);
+  }
+  return { taskId, sql };
+}
+
+async function getShushuTaskStatus(params: Record<string, unknown>) {
+  const config = normalizeShushuQueryConfig(params);
+  const taskId = String(params.taskId ?? "").trim();
+  if (!taskId) throw new Error("缺少数数查询 taskId。");
+  const payload = await postShushuJson(config.apiBaseUrl, "/open/sql-task-info", {
+    token: config.token,
+    taskId,
+  });
+  if (!isSuccessPayload(payload)) throw new Error(shushuErrorMessage(payload));
+  return normalizeShushuTaskInfo(payload);
+}
+
+async function getShushuResultPage(params: Record<string, unknown>) {
+  const config = normalizeShushuQueryConfig(params);
+  const taskId = String(params.taskId ?? "").trim();
+  const pageId = Number(params.pageId) || 0;
+  const columns = Array.isArray(params.columns) ? params.columns.map(String) : [];
+  if (!taskId) throw new Error("缺少数数查询 taskId。");
+  const rows = await fetchShushuResultPage(config.apiBaseUrl, {
+    token: config.token,
+    taskId,
+    pageId,
+    headers: columns,
+  });
+  return {
+    rows,
+    columns: columns.length > 0 ? columns : [...new Set(rows.flatMap((row) => Object.keys(row)))],
+    pageId,
+  };
+}
+
 function registerShushuApi(middlewares: {
   use: (route: string, handler: (req: any, res: any) => void) => void;
 }) {
@@ -412,6 +486,19 @@ function registerShushuApi(middlewares: {
         return;
       }
       const params = await readJsonBody<Record<string, unknown>>(req);
+      const action = String(params.action ?? "query");
+      if (action === "start") {
+        jsonResponse(res, 200, await startShushuQuery(params));
+        return;
+      }
+      if (action === "status") {
+        jsonResponse(res, 200, await getShushuTaskStatus(params));
+        return;
+      }
+      if (action === "page") {
+        jsonResponse(res, 200, await getShushuResultPage(params));
+        return;
+      }
       jsonResponse(res, 200, await queryShushuRows(params));
     } catch (error) {
       jsonResponse(res, 500, { error: String((error as Error).message) });

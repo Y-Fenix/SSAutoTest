@@ -5,7 +5,12 @@ import { coverageResultsToCsv, downloadCsv } from "./lib/exporter";
 import { readTabularFile } from "./lib/fileReaders";
 import { listLarkSheetTabs, readLarkSheetRows, type LarkSheetTab } from "./lib/larkSheetClient";
 import { sampleActualRows } from "./lib/sampleData";
-import { listShushuProjects, queryShushuRows } from "./lib/shushuQueryClient";
+import {
+  getShushuQueryStatus,
+  listShushuProjects,
+  readShushuResultPage,
+  startShushuQuery,
+} from "./lib/shushuQueryClient";
 import type { ShushuProjectOption } from "./lib/shushuQuery";
 import { parseTrackingPlanRows } from "./lib/trackingPlanParser";
 import type { CoverageReport, CoverageResult, CoverageStatus, ExpectedEvent, RawRow } from "./lib/types";
@@ -27,7 +32,14 @@ const defaultShushuForm = {
   dateColumn: "$part_date",
   userIdColumn: "#account_id",
   pageSize: "1000",
+  maxRows: "1000",
 };
+
+function wait(ms: number) {
+  return new Promise((resolve) => {
+    window.setTimeout(resolve, ms);
+  });
+}
 
 function formatPercent(rate: number): string {
   return `${Math.round(rate * 100)}%`;
@@ -191,6 +203,7 @@ export default function App() {
   const [shushuForm, setShushuForm] = useState(defaultShushuForm);
   const [isReadingShushuProjects, setIsReadingShushuProjects] = useState(false);
   const [isQueryingShushu, setIsQueryingShushu] = useState(false);
+  const [shushuQueryProgress, setShushuQueryProgress] = useState("");
   const [lastShushuSql, setLastShushuSql] = useState("");
   const [statusFilter, setStatusFilter] = useState<(typeof statusOptions)[number]>("全部");
   const [query, setQuery] = useState("");
@@ -371,14 +384,53 @@ export default function App() {
   async function handleShushuQuery() {
     try {
       setIsQueryingShushu(true);
-      const result = await queryShushuRows({
+      setShushuQueryProgress("正在提交 SQL 任务...");
+      const queryConfig = {
         ...shushuForm,
         eventTable: shushuForm.eventTable.trim() || undefined,
         pageSize: Number(shushuForm.pageSize) || 1000,
-      });
-      if (result.rows.length === 0) throw new Error("数数查询返回 0 行数据。");
-      applyActualRows(result.rows, result.columns);
-      setLastShushuSql(result.sql);
+      };
+      const started = await startShushuQuery(queryConfig);
+      setLastShushuSql(started.sql);
+      setShushuQueryProgress(`任务已提交：${started.taskId}`);
+
+      let taskInfo = await getShushuQueryStatus({ ...queryConfig, taskId: started.taskId });
+      for (let attempt = 0; attempt < 180 && taskInfo.status !== "FINISHED"; attempt += 1) {
+        if (["FAILED", "FAIL", "ERROR", "CANCELED", "CANCELLED"].includes(taskInfo.status.toUpperCase())) {
+          throw new Error(taskInfo.errorMessage || `数数 SQL 任务失败：${taskInfo.status}`);
+        }
+        setShushuQueryProgress(`数数计算中：${taskInfo.progress || 0}%`);
+        await wait(1000);
+        taskInfo = await getShushuQueryStatus({ ...queryConfig, taskId: started.taskId });
+      }
+
+      if (taskInfo.status !== "FINISHED") throw new Error("数数 SQL 任务仍在执行，请稍后缩小范围重试。");
+      const pageCount = taskInfo.pageCount || 1;
+      const maxRows = Number(shushuForm.maxRows) > 0 ? Number(shushuForm.maxRows) : Number.POSITIVE_INFINITY;
+      const maxPages = Number.isFinite(maxRows)
+        ? Math.max(1, Math.ceil(maxRows / (Number(shushuForm.pageSize) || 1000)))
+        : pageCount;
+      const pagesToRead = Math.min(pageCount, maxPages);
+      const rows: RawRow[] = [];
+      let columns = taskInfo.columns;
+
+      for (let pageId = 0; pageId < pagesToRead; pageId += 1) {
+        setShushuQueryProgress(`正在拉取结果：第 ${pageId + 1} / ${pagesToRead} 页`);
+        const page = await readShushuResultPage({
+          ...queryConfig,
+          taskId: started.taskId,
+          pageId,
+          columns,
+        });
+        columns = columns.length > 0 ? columns : page.columns;
+        rows.push(...page.rows);
+        if (rows.length >= maxRows) break;
+      }
+
+      const limitedRows = Number.isFinite(maxRows) ? rows.slice(0, maxRows) : rows;
+      if (limitedRows.length === 0) throw new Error("数数查询返回 0 行数据。");
+      setShushuQueryProgress(`解析完成：已读取 ${limitedRows.length} / ${taskInfo.rowCount || limitedRows.length} 行`);
+      applyActualRows(limitedRows, columns);
       clearErrorPrefix("数数查询");
     } catch (error) {
       pushError("数数查询", error);
@@ -671,6 +723,15 @@ export default function App() {
                       <option value="user_id">user_id</option>
                     </select>
                   </label>
+                  <label className="field-row">
+                    <span>最多读取行数</span>
+                    <input
+                      min="1"
+                      type="number"
+                      value={shushuForm.maxRows}
+                      onChange={(event) => updateShushuForm("maxRows", event.target.value)}
+                    />
+                  </label>
                   <button
                     className="primary-button query-button"
                     disabled={isQueryingShushu || !shushuForm.apiBaseUrl || !shushuForm.token || !shushuForm.projectId}
@@ -680,6 +741,7 @@ export default function App() {
                     {isQueryingShushu ? "查询中" : "查询实际数据"}
                   </button>
                 </div>
+                {shushuQueryProgress && <div className="query-progress">{shushuQueryProgress}</div>}
                 {lastShushuSql && <code className="sql-preview">{lastShushuSql}</code>}
                 <strong>{actualRows.length} 行记录</strong>
               </div>

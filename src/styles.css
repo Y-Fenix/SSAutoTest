@@ -202,7 +202,7 @@ h2 {
 }
 
 .form-grid-2 {
-  grid-template-columns: minmax(0, 1fr) max-content;
+  grid-template-columns: repeat(2, minmax(0, 1fr)) max-content;
   align-items: end;
 }
 
@@ -216,6 +216,16 @@ h2 {
 
 .query-button {
   min-width: 132px;
+}
+
+.query-progress {
+  border: 1px solid #bfdbfe;
+  border-radius: 6px;
+  padding: 8px 10px;
+  background: #eff6ff;
+  color: #1d4ed8;
+  font-size: 13px;
+  font-weight: 800;
 }
 
 .sql-preview {

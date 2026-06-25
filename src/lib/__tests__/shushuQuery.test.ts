@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
   buildShushuSql,
+  extractShushuTaskId,
   normalizeShushuPageRows,
   normalizeShushuQueryConfig,
+  normalizeShushuTaskInfo,
   parseShushuResultPageText,
 } from "../shushuQuery";
 
@@ -43,6 +45,12 @@ describe("buildShushuSql", () => {
       }),
     ).toThrow("事件表名只能包含");
   });
+
+  it("allows schema qualified event tables", () => {
+    const config = normalizeShushuQueryConfig({ projectId: "33", eventTable: "ta.v_event_33" });
+
+    expect(buildShushuSql(config)).toBe("SELECT * FROM ta.v_event_33");
+  });
 });
 
 describe("normalizeShushuPageRows", () => {
@@ -56,6 +64,37 @@ describe("normalizeShushuPageRows", () => {
     const rows = normalizeShushuPageRows([], ['{"#event_name":"level_start","level_id":"1"}']);
 
     expect(rows).toEqual([{ "#event_name": "level_start", level_id: "1" }]);
+  });
+});
+
+describe("task metadata helpers", () => {
+  it("extracts task id from submit response", () => {
+    expect(extractShushuTaskId({ data: { taskId: "task-1" } })).toBe("task-1");
+  });
+
+  it("normalizes task progress and result statistics", () => {
+    const task = normalizeShushuTaskInfo({
+      data: {
+        taskId: "task-1",
+        status: "FINISHED",
+        progress: 100,
+        resultStat: {
+          rowCount: 1200,
+          pageCount: 2,
+          headers: ["#event_name", "level_id"],
+        },
+      },
+    });
+
+    expect(task).toEqual({
+      taskId: "task-1",
+      status: "FINISHED",
+      progress: 100,
+      rowCount: 1200,
+      pageCount: 2,
+      columns: ["#event_name", "level_id"],
+      errorMessage: "",
+    });
   });
 });
 
