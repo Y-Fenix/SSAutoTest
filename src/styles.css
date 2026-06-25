@@ -123,6 +123,8 @@ h2 {
   border: 1px dashed #b9c6d8;
   border-radius: 8px;
   background: #f8fbff;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  height: 100%;
   min-height: 156px;
 }
 

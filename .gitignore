@@ -7,3 +7,4 @@ outputs/
 *.log
 *.pid
 *.local
+config/shushu.local.json

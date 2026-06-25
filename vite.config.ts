@@ -1,6 +1,6 @@
 import react from "@vitejs/plugin-react";
 import { execFile } from "node:child_process";
-import { access } from "node:fs/promises";
+import { access, readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -18,6 +18,31 @@ import {
 
 const execFileAsync = promisify(execFile);
 let larkCliPathCache: string | null = null;
+const shushuLocalConfigPath = path.resolve(process.cwd(), "config/shushu.local.json");
+
+async function readShushuLocalConfig(): Promise<{ apiBaseUrl: string; token: string; loginName: string }> {
+  try {
+    const raw = await readFile(shushuLocalConfigPath, "utf8");
+    const config = JSON.parse(raw) as { apiBaseUrl?: string; token?: string; loginName?: string };
+    return {
+      apiBaseUrl: String(config.apiBaseUrl ?? "").trim(),
+      token: String(config.token ?? "").trim(),
+      loginName: String(config.loginName ?? "").trim(),
+    };
+  } catch {
+    return { apiBaseUrl: "", token: "", loginName: "" };
+  }
+}
+
+async function withShushuLocalConfig(params: Record<string, unknown>) {
+  const localConfig = await readShushuLocalConfig();
+  return {
+    ...params,
+    apiBaseUrl: String(params.apiBaseUrl ?? "").trim() || localConfig.apiBaseUrl,
+    token: String(params.token ?? "").trim() || localConfig.token,
+    loginName: String(params.loginName ?? "").trim() || localConfig.loginName,
+  };
+}
 
 async function canAccess(filePath: string): Promise<boolean> {
   try {
@@ -370,7 +395,7 @@ function normalizeProjectOptions(payload: Record<string, unknown>): ShushuProjec
 }
 
 async function queryShushuRows(params: Record<string, unknown>) {
-  const config = normalizeShushuQueryConfig(params);
+  const config = normalizeShushuQueryConfig(await withShushuLocalConfig(params));
   if (!config.apiBaseUrl) throw new Error("请填写数数 API 地址。");
   if (!config.token) throw new Error("请填写数数 OpenAPI Token。");
   const sql = buildShushuSql(config);
@@ -423,7 +448,7 @@ async function queryShushuRows(params: Record<string, unknown>) {
 }
 
 async function startShushuQuery(params: Record<string, unknown>) {
-  const config = normalizeShushuQueryConfig(params);
+  const config = normalizeShushuQueryConfig(await withShushuLocalConfig(params));
   if (!config.apiBaseUrl) throw new Error("请填写数数 API 地址。");
   if (!config.token) throw new Error("请填写数数 OpenAPI Token。");
   const sql = buildShushuSql(config);
@@ -441,7 +466,7 @@ async function startShushuQuery(params: Record<string, unknown>) {
 }
 
 async function getShushuTaskStatus(params: Record<string, unknown>) {
-  const config = normalizeShushuQueryConfig(params);
+  const config = normalizeShushuQueryConfig(await withShushuLocalConfig(params));
   const taskId = String(params.taskId ?? "").trim();
   if (!taskId) throw new Error("缺少数数查询 taskId。");
   const payload = await getShushuJson(config.apiBaseUrl, "/open/sql-task-info", {
@@ -453,7 +478,7 @@ async function getShushuTaskStatus(params: Record<string, unknown>) {
 }
 
 async function getShushuResultPage(params: Record<string, unknown>) {
-  const config = normalizeShushuQueryConfig(params);
+  const config = normalizeShushuQueryConfig(await withShushuLocalConfig(params));
   const taskId = String(params.taskId ?? "").trim();
   const pageId = Number(params.pageId) || 0;
   const columns = Array.isArray(params.columns) ? params.columns.map(String) : [];
@@ -474,6 +499,23 @@ async function getShushuResultPage(params: Record<string, unknown>) {
 function registerShushuApi(middlewares: {
   use: (route: string, handler: (req: any, res: any) => void) => void;
 }) {
+  middlewares.use("/api/shushu-config", async (req, res) => {
+    try {
+      if (req.method !== "GET") {
+        jsonResponse(res, 405, { error: "Method not allowed" });
+        return;
+      }
+      const config = await readShushuLocalConfig();
+      jsonResponse(res, 200, {
+        apiBaseUrl: config.apiBaseUrl,
+        loginName: config.loginName,
+        hasToken: Boolean(config.token),
+      });
+    } catch (error) {
+      jsonResponse(res, 500, { error: String((error as Error).message) });
+    }
+  });
+
   middlewares.use("/api/shushu-projects", async (req, res) => {
     try {
       if (req.method !== "POST") {
@@ -485,14 +527,17 @@ function registerShushuApi(middlewares: {
         token?: string;
         loginName?: string;
       }>(req);
-      const baseUrl = apiBaseUrl.trim().replace(/\/+$/, "");
+      const resolved = await withShushuLocalConfig({ apiBaseUrl, token, loginName });
+      const baseUrl = String(resolved.apiBaseUrl ?? "").trim().replace(/\/+$/, "");
+      const resolvedToken = String(resolved.token ?? "").trim();
+      const resolvedLoginName = String(resolved.loginName ?? "").trim();
       if (!baseUrl) throw new Error("请填写数数 API 地址。");
-      if (!token.trim()) throw new Error("请填写数数 OpenAPI Token。");
-      if (!loginName.trim()) throw new Error("请填写数数登录名。");
+      if (!resolvedToken) throw new Error("请填写数数 OpenAPI Token。");
+      if (!resolvedLoginName) throw new Error("请填写数数登录名。");
       const payload = await postShushuJson(baseUrl, "/open/project-list", {
-        token: token.trim(),
-        loginName: loginName.trim(),
-        login_name: loginName.trim(),
+        token: resolvedToken,
+        loginName: resolvedLoginName,
+        login_name: resolvedLoginName,
       });
       if (!isSuccessPayload(payload)) throw new Error(shushuErrorMessage(payload));
       jsonResponse(res, 200, { projects: normalizeProjectOptions(payload) });

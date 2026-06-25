@@ -1,8 +1,8 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { detectEventNameColumn, parseActualDataRows } from "./lib/actualDataParser";
 import { evaluateCoverage } from "./lib/coverageEvaluator";
 import { coverageResultsToCsv, downloadCsv } from "./lib/exporter";
-import { readTabularFile } from "./lib/fileReaders";
+import { listWorkbookSheets, readTabularFile, readWorkbookSheets } from "./lib/fileReaders";
 import { listLarkSheetTabs, readLarkSheetRows, type LarkSheetTab } from "./lib/larkSheetClient";
 import { sampleActualRows } from "./lib/sampleData";
 import {
@@ -17,6 +17,7 @@ import type { CoverageReport, CoverageResult, CoverageStatus, ExpectedEvent, Raw
 
 type DisplayStatus = CoverageStatus | "公共事件缺失";
 type ActualInputMode = "file" | "shushu";
+type ExpectedInputMode = "lark" | "local";
 
 const statusOptions = ["全部", "测试通过", "事件缺失", "属性缺失", "详情缺失", "公共事件缺失"] as const;
 const actualColumnPrompt = "实际数据未自动识别事件名列，请在上传区域选择事件名列后继续分析。";
@@ -196,18 +197,58 @@ export default function App() {
   const [larkUrl, setLarkUrl] = useState("");
   const [larkTabs, setLarkTabs] = useState<LarkSheetTab[]>([]);
   const [selectedLarkSheetIds, setSelectedLarkSheetIds] = useState<string[]>([]);
+  const [expectedInputMode, setExpectedInputMode] = useState<ExpectedInputMode>("lark");
+  const [localExpectedFile, setLocalExpectedFile] = useState<File | null>(null);
+  const [localExpectedSheets, setLocalExpectedSheets] = useState<LarkSheetTab[]>([]);
+  const [selectedLocalSheetIds, setSelectedLocalSheetIds] = useState<string[]>([]);
   const [isReadingLark, setIsReadingLark] = useState(false);
-  const [isLarkTabsExpanded, setIsLarkTabsExpanded] = useState(false);
+  const [isLarkTabsExpanded, setIsLarkTabsExpanded] = useState(true);
+  const [isLocalSheetsExpanded, setIsLocalSheetsExpanded] = useState(true);
   const [isActualColumnExpanded, setIsActualColumnExpanded] = useState(false);
-  const [actualInputMode, setActualInputMode] = useState<ActualInputMode>("file");
+  const [actualInputMode, setActualInputMode] = useState<ActualInputMode>("shushu");
   const [shushuProjects, setShushuProjects] = useState<ShushuProjectOption[]>([]);
   const [shushuForm, setShushuForm] = useState(defaultShushuForm);
-  const [isReadingShushuProjects, setIsReadingShushuProjects] = useState(false);
   const [isQueryingShushu, setIsQueryingShushu] = useState(false);
   const [shushuQueryProgress, setShushuQueryProgress] = useState("");
   const [lastShushuSql, setLastShushuSql] = useState("");
   const [statusFilter, setStatusFilter] = useState<(typeof statusOptions)[number]>("全部");
   const [query, setQuery] = useState("");
+
+  useEffect(() => {
+    let isMounted = true;
+    async function loadShushuConfigAndProjects() {
+      try {
+        const response = await fetch("/api/shushu-config");
+        const config = await response.json() as { apiBaseUrl?: string; loginName?: string; hasToken?: boolean };
+        if (!response.ok) throw new Error("数数本地配置读取失败。");
+        if (!isMounted) return;
+        setShushuForm((current) => ({
+          ...current,
+          apiBaseUrl: config.apiBaseUrl ?? "",
+          loginName: config.loginName ?? "",
+          token: "",
+        }));
+        const projects = await listShushuProjects("", "", "");
+        if (!isMounted) return;
+        setShushuProjects(projects);
+        const firstProject = projects[0];
+        if (firstProject) {
+          setShushuForm((current) => ({
+            ...current,
+            projectId: current.projectId || firstProject.id,
+            eventTable: current.eventTable || `v_event_${firstProject.id}`,
+          }));
+        }
+        clearErrorPrefix("数数查询");
+      } catch (error) {
+        if (isMounted) pushError("数数查询", error);
+      }
+    }
+    loadShushuConfigAndProjects();
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   const report: CoverageReport | null = useMemo(() => {
     if (expectedEvents.length === 0 || actualRows.length === 0 || !actualEventNameColumn) return null;
@@ -301,8 +342,8 @@ export default function App() {
       setIsReadingLark(true);
       const tabs = await listLarkSheetTabs(larkUrl);
       setLarkTabs(tabs);
-      setSelectedLarkSheetIds(tabs.slice(0, 3).map((tab) => tab.id));
-      setIsLarkTabsExpanded(false);
+      setSelectedLarkSheetIds(tabs.slice(0, 2).map((tab) => tab.id));
+      setIsLarkTabsExpanded(true);
       clearErrorPrefix("预期表");
     } catch (error) {
       setLarkTabs([]);
@@ -322,6 +363,38 @@ export default function App() {
       pushError("预期表", error);
     } finally {
       setIsReadingLark(false);
+    }
+  }
+
+  async function handleLocalExpectedFile(file: File | null) {
+    if (!file) return;
+    try {
+      setLocalExpectedFile(file);
+      const extension = file.name.split(".").pop()?.toLowerCase();
+      if (extension === "csv" || extension === "txt") {
+        const rows = await readTabularFile(file);
+        handleExpectedRows(rows);
+        setLocalExpectedSheets([]);
+        setSelectedLocalSheetIds([]);
+        return;
+      }
+      const sheets = await listWorkbookSheets(file);
+      setLocalExpectedSheets(sheets);
+      setSelectedLocalSheetIds(sheets.slice(0, 2).map((sheet) => sheet.id));
+      setIsLocalSheetsExpanded(true);
+      clearErrorPrefix("预期表");
+    } catch (error) {
+      pushError("预期表", error);
+    }
+  }
+
+  async function handleReadSelectedLocalSheets() {
+    try {
+      if (!localExpectedFile) throw new Error("请先上传本地预期埋点表。");
+      if (selectedLocalSheetIds.length === 0) throw new Error("请至少选择一个页签。");
+      handleExpectedRows(await readWorkbookSheets(localExpectedFile, selectedLocalSheetIds));
+    } catch (error) {
+      pushError("预期表", error);
     }
   }
 
@@ -363,23 +436,6 @@ export default function App() {
       }
       return { ...current, [field]: value };
     });
-  }
-
-  async function handleListShushuProjects() {
-    try {
-      setIsReadingShushuProjects(true);
-      const projects = await listShushuProjects(shushuForm.apiBaseUrl, shushuForm.token, shushuForm.loginName);
-      setShushuProjects(projects);
-      if (!shushuForm.projectId && projects[0]) {
-        updateShushuForm("projectId", projects[0].id);
-      }
-      clearErrorPrefix("数数查询");
-    } catch (error) {
-      setShushuProjects([]);
-      pushError("数数查询", error);
-    } finally {
-      setIsReadingShushuProjects(false);
-    }
   }
 
   async function handleShushuQuery() {
@@ -457,6 +513,12 @@ export default function App() {
     );
   }
 
+  function toggleLocalSheet(sheetId: string) {
+    setSelectedLocalSheetIds((current) =>
+      current.includes(sheetId) ? current.filter((id) => id !== sheetId) : [...current, sheetId],
+    );
+  }
+
   function handleStatusFilterChange(nextStatus: (typeof statusOptions)[number]) {
     setStatusFilter(nextStatus);
     window.requestAnimationFrame(() => {
@@ -499,17 +561,34 @@ export default function App() {
           <h2>数据上传</h2>
         </div>
         <div className="upload-list horizontal-upload-list">
-          <label className="upload-box">
-            <span>飞书预期埋点表链接</span>
+          <div className="upload-box">
+            <div className="source-tabs source-tabs-left" role="tablist" aria-label="预期数据来源">
+              <button
+                className={expectedInputMode === "lark" ? "active" : ""}
+                onClick={() => setExpectedInputMode("lark")}
+                type="button"
+              >
+                飞书预期埋点表链接
+              </button>
+              <button
+                className={expectedInputMode === "local" ? "active" : ""}
+                onClick={() => setExpectedInputMode("local")}
+                type="button"
+              >
+                本地埋点预期表
+              </button>
+            </div>
+            {expectedInputMode === "lark" ? (
+              <>
             <div className="inline-form">
               <input
                 value={larkUrl}
                 onChange={(event) => {
-                    setLarkUrl(event.target.value);
-                    setLarkTabs([]);
-                    setSelectedLarkSheetIds([]);
-                    setIsLarkTabsExpanded(false);
-                  }}
+                  setLarkUrl(event.target.value);
+                  setLarkTabs([]);
+                  setSelectedLarkSheetIds([]);
+                  setIsLarkTabsExpanded(true);
+                }}
                 placeholder="https://.../sheets/..."
                 aria-label="飞书表格链接"
               />
@@ -555,29 +634,71 @@ export default function App() {
                     ))}
                   </div>
                 )}
-                <button
-                  className="primary-button inline-button"
-                  disabled={isReadingLark || selectedLarkSheetIds.length === 0}
-                  onClick={handleReadSelectedLarkSheets}
-                  type="button"
-                >
+                <button className="primary-button inline-button" disabled={isReadingLark || selectedLarkSheetIds.length === 0} onClick={handleReadSelectedLarkSheets} type="button">
                   读取选中页签
                 </button>
               </>
             )}
-            <strong>
-              {expectedEvents.length} 个事件 / {expectedPropertyCount} 个属性
-            </strong>
-          </label>
+              </>
+            ) : (
+              <>
+                <label className="file-field">
+                  <span>本地埋点预期表</span>
+                  <input
+                    type="file"
+                    accept=".csv,.xls,.xlsx"
+                    onChange={(event) => handleLocalExpectedFile(event.target.files?.[0] ?? null)}
+                  />
+                </label>
+                {localExpectedSheets.length > 0 && (
+                  <>
+                    <div className="selection-summary">
+                      <span>
+                        已选 {selectedLocalSheetIds.length} 个页签：
+                        {localExpectedSheets
+                          .filter((tab) => selectedLocalSheetIds.includes(tab.id))
+                          .map((tab) => tab.title)
+                          .join("、") || "-"}
+                      </span>
+                      <button
+                        className="link-button"
+                        onClick={() => setIsLocalSheetsExpanded((current) => !current)}
+                        type="button"
+                      >
+                        {isLocalSheetsExpanded ? "收起" : "展开"}
+                      </button>
+                    </div>
+                    {isLocalSheetsExpanded && (
+                      <div className="sheet-picker" aria-label="本地页签选择">
+                        {localExpectedSheets.map((tab) => (
+                          <label className="checkbox-row" key={tab.id}>
+                            <input
+                              type="checkbox"
+                              checked={selectedLocalSheetIds.includes(tab.id)}
+                              onChange={() => toggleLocalSheet(tab.id)}
+                            />
+                            <span>{tab.title}</span>
+                            <code>{tab.id}</code>
+                          </label>
+                        ))}
+                      </div>
+                    )}
+                    <button
+                      className="primary-button inline-button"
+                      disabled={selectedLocalSheetIds.length === 0}
+                      onClick={handleReadSelectedLocalSheets}
+                      type="button"
+                    >
+                      读取选中页签
+                    </button>
+                  </>
+                )}
+              </>
+            )}
+            <strong>{expectedEvents.length} 个事件 / {expectedPropertyCount} 个属性</strong>
+          </div>
           <div className="upload-box">
-            <div className="source-tabs" role="tablist" aria-label="实际数据来源">
-              <button
-                className={actualInputMode === "file" ? "active" : ""}
-                onClick={() => setActualInputMode("file")}
-                type="button"
-              >
-                实际 SQL 导出 CSV/Excel
-              </button>
+            <div className="source-tabs source-tabs-right" role="tablist" aria-label="实际数据来源">
               <button
                 className={actualInputMode === "shushu" ? "active" : ""}
                 onClick={() => setActualInputMode("shushu")}
@@ -585,56 +706,16 @@ export default function App() {
               >
                 数数自定义查询
               </button>
+              <button
+                className={actualInputMode === "file" ? "active" : ""}
+                onClick={() => setActualInputMode("file")}
+                type="button"
+              >
+                实际 SQL 导出 CSV/Excel
+              </button>
             </div>
-            {actualInputMode === "file" ? (
-              <label className="file-field">
-                <span>实际 SQL 导出 CSV/Excel</span>
-                <input
-                  type="file"
-                  accept=".csv,.xls,.xlsx"
-                  onChange={(event) => handleActualFile(event.target.files?.[0] ?? null)}
-                />
-                <strong>{actualRows.length} 行记录</strong>
-              </label>
-            ) : (
+            {actualInputMode === "shushu" ? (
               <div className="shushu-query-form">
-                <div className="form-grid form-grid-3">
-                  <label className="field-row">
-                    <span>API 地址</span>
-                    <input
-                      value={shushuForm.apiBaseUrl}
-                      onChange={(event) => updateShushuForm("apiBaseUrl", event.target.value)}
-                      placeholder="https://ta.example.com"
-                    />
-                  </label>
-                  <label className="field-row">
-                    <span>OpenAPI Token</span>
-                    <input
-                      value={shushuForm.token}
-                      onChange={(event) => updateShushuForm("token", event.target.value)}
-                      placeholder="token"
-                      type="password"
-                    />
-                  </label>
-                  <label className="field-row">
-                    <span>登录名</span>
-                    <div className="inline-form compact-inline-form">
-                      <input
-                        value={shushuForm.loginName}
-                        onChange={(event) => updateShushuForm("loginName", event.target.value)}
-                        placeholder="name@example.com"
-                      />
-                      <button
-                        className="secondary-button"
-                        disabled={isReadingShushuProjects || !shushuForm.apiBaseUrl || !shushuForm.token || !shushuForm.loginName}
-                        onClick={handleListShushuProjects}
-                        type="button"
-                      >
-                        {isReadingShushuProjects ? "读取中" : "拉取项目"}
-                      </button>
-                    </div>
-                  </label>
-                </div>
                 <div className="form-grid form-grid-3">
                   <label className="field-row">
                     <span>项目</span>
@@ -679,46 +760,28 @@ export default function App() {
                 <div className="form-grid form-grid-4">
                   <label className="field-row">
                     <span>开始日期</span>
-                    <input
-                      type="date"
-                      value={shushuForm.startDate}
-                      onChange={(event) => updateShushuForm("startDate", event.target.value)}
-                    />
+                    <input type="date" value={shushuForm.startDate} onChange={(event) => updateShushuForm("startDate", event.target.value)} />
                   </label>
                   <label className="field-row">
                     <span>结束日期</span>
-                    <input
-                      type="date"
-                      value={shushuForm.endDate}
-                      onChange={(event) => updateShushuForm("endDate", event.target.value)}
-                    />
+                    <input type="date" value={shushuForm.endDate} onChange={(event) => updateShushuForm("endDate", event.target.value)} />
                   </label>
                   <label className="field-row">
                     <span>日期字段</span>
-                    <select
-                      value={shushuForm.dateColumn}
-                      onChange={(event) => updateShushuForm("dateColumn", event.target.value)}
-                    >
+                    <select value={shushuForm.dateColumn} onChange={(event) => updateShushuForm("dateColumn", event.target.value)}>
                       <option value="$part_date">$part_date</option>
                       <option value="#event_time">#event_time</option>
                     </select>
                   </label>
                   <label className="field-row">
                     <span>app_version</span>
-                    <input
-                      value={shushuForm.appVersion}
-                      onChange={(event) => updateShushuForm("appVersion", event.target.value)}
-                      placeholder="可为空"
-                    />
+                    <input value={shushuForm.appVersion} onChange={(event) => updateShushuForm("appVersion", event.target.value)} placeholder="可为空" />
                   </label>
                 </div>
                 <div className="form-grid form-grid-2">
                   <label className="field-row">
                     <span>用户 ID 字段</span>
-                    <select
-                      value={shushuForm.userIdColumn}
-                      onChange={(event) => updateShushuForm("userIdColumn", event.target.value)}
-                    >
+                    <select value={shushuForm.userIdColumn} onChange={(event) => updateShushuForm("userIdColumn", event.target.value)}>
                       <option value="#user_id">#user_id</option>
                       <option value="#account_id">#account_id</option>
                       <option value="#distinct_id">#distinct_id</option>
@@ -727,27 +790,13 @@ export default function App() {
                   </label>
                   <label className="field-row">
                     <span>用户 ID</span>
-                    <input
-                      value={shushuForm.userId}
-                      onChange={(event) => updateShushuForm("userId", event.target.value)}
-                      placeholder="可为空"
-                    />
+                    <input value={shushuForm.userId} onChange={(event) => updateShushuForm("userId", event.target.value)} placeholder="可为空" />
                   </label>
                   <label className="field-row">
                     <span>最多读取行数</span>
-                    <input
-                      min="1"
-                      type="number"
-                      value={shushuForm.maxRows}
-                      onChange={(event) => updateShushuForm("maxRows", event.target.value)}
-                    />
+                    <input min="1" type="number" value={shushuForm.maxRows} onChange={(event) => updateShushuForm("maxRows", event.target.value)} />
                   </label>
-                  <button
-                    className="primary-button query-button"
-                    disabled={isQueryingShushu || !shushuForm.apiBaseUrl || !shushuForm.token || !shushuForm.projectId}
-                    onClick={handleShushuQuery}
-                    type="button"
-                  >
+                  <button className="primary-button query-button" disabled={isQueryingShushu || !shushuForm.projectId} onClick={handleShushuQuery} type="button">
                     {isQueryingShushu ? "查询中" : "查询实际数据"}
                   </button>
                 </div>
@@ -755,6 +804,16 @@ export default function App() {
                 {lastShushuSql && <code className="sql-preview">{lastShushuSql}</code>}
                 <strong>{actualRows.length} 行记录</strong>
               </div>
+            ) : (
+              <label className="file-field">
+                <span>实际 SQL 导出 CSV/Excel</span>
+                <input
+                  type="file"
+                  accept=".csv,.xls,.xlsx"
+                  onChange={(event) => handleActualFile(event.target.files?.[0] ?? null)}
+                />
+                <strong>{actualRows.length} 行记录</strong>
+              </label>
             )}
             {actualRows.length > 0 && actualColumns.length > 0 && (
               <>
