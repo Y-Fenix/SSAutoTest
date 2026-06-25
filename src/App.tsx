@@ -5,13 +5,29 @@ import { coverageResultsToCsv, downloadCsv } from "./lib/exporter";
 import { readTabularFile } from "./lib/fileReaders";
 import { listLarkSheetTabs, readLarkSheetRows, type LarkSheetTab } from "./lib/larkSheetClient";
 import { sampleActualRows } from "./lib/sampleData";
+import { listShushuProjects, queryShushuRows } from "./lib/shushuQueryClient";
+import type { ShushuProjectOption } from "./lib/shushuQuery";
 import { parseTrackingPlanRows } from "./lib/trackingPlanParser";
 import type { CoverageReport, CoverageResult, CoverageStatus, ExpectedEvent, RawRow } from "./lib/types";
 
 type DisplayStatus = CoverageStatus | "公共事件缺失";
+type ActualInputMode = "file" | "shushu";
 
 const statusOptions = ["全部", "测试通过", "事件缺失", "属性缺失", "详情缺失", "公共事件缺失"] as const;
 const actualColumnPrompt = "实际数据未自动识别事件名列，请在上传区域选择事件名列后继续分析。";
+const defaultShushuForm = {
+  apiBaseUrl: "",
+  token: "",
+  loginName: "",
+  projectId: "",
+  eventTable: "",
+  startDate: "",
+  endDate: "",
+  userId: "",
+  dateColumn: "$part_date",
+  userIdColumn: "#account_id",
+  pageSize: "1000",
+};
 
 function formatPercent(rate: number): string {
   return `${Math.round(rate * 100)}%`;
@@ -170,6 +186,12 @@ export default function App() {
   const [isReadingLark, setIsReadingLark] = useState(false);
   const [isLarkTabsExpanded, setIsLarkTabsExpanded] = useState(false);
   const [isActualColumnExpanded, setIsActualColumnExpanded] = useState(false);
+  const [actualInputMode, setActualInputMode] = useState<ActualInputMode>("file");
+  const [shushuProjects, setShushuProjects] = useState<ShushuProjectOption[]>([]);
+  const [shushuForm, setShushuForm] = useState(defaultShushuForm);
+  const [isReadingShushuProjects, setIsReadingShushuProjects] = useState(false);
+  const [isQueryingShushu, setIsQueryingShushu] = useState(false);
+  const [lastShushuSql, setLastShushuSql] = useState("");
   const [statusFilter, setStatusFilter] = useState<(typeof statusOptions)[number]>("全部");
   const [query, setQuery] = useState("");
 
@@ -294,19 +316,74 @@ export default function App() {
     try {
       const rows = await readTabularFile(file);
       if (rows.length === 0) throw new Error("实际事件数据为空。");
-      const columns = [...new Set(rows.flatMap((row) => Object.keys(row).map((key) => key.trim()).filter(Boolean)))];
-      const detectedColumn = columns.includes("#event_name") ? "#event_name" : detectEventNameColumn(rows);
-      setActualRows(rows);
-      setActualColumns(columns);
-      setActualEventNameColumn(detectedColumn ?? "");
-      setIsActualColumnExpanded(false);
-      clearErrorPrefix("实际数据");
-      setErrors((current) => {
-        const withoutPrompt = current.filter((item) => item !== actualColumnPrompt);
-        return detectedColumn ? withoutPrompt : [...withoutPrompt, actualColumnPrompt];
-      });
+      applyActualRows(rows);
     } catch (error) {
       pushError("实际数据", error);
+    }
+  }
+
+  function applyActualRows(rows: RawRow[], preferredColumns?: string[]) {
+    const columns = preferredColumns?.length
+      ? preferredColumns
+      : [...new Set(rows.flatMap((row) => Object.keys(row).map((key) => key.trim()).filter(Boolean)))];
+    const detectedColumn = columns.includes("#event_name") ? "#event_name" : detectEventNameColumn(rows);
+    setActualRows(rows);
+    setActualColumns(columns);
+    setActualEventNameColumn(detectedColumn ?? "");
+    setIsActualColumnExpanded(false);
+    clearErrorPrefix("实际数据");
+    setErrors((current) => {
+      const withoutPrompt = current.filter((item) => item !== actualColumnPrompt);
+      return detectedColumn ? withoutPrompt : [...withoutPrompt, actualColumnPrompt];
+    });
+  }
+
+  function updateShushuForm(field: keyof typeof defaultShushuForm, value: string) {
+    setShushuForm((current) => {
+      if (field === "projectId") {
+        return {
+          ...current,
+          projectId: value,
+          eventTable: current.eventTable && current.eventTable !== `v_event_${current.projectId}` ? current.eventTable : "",
+        };
+      }
+      return { ...current, [field]: value };
+    });
+  }
+
+  async function handleListShushuProjects() {
+    try {
+      setIsReadingShushuProjects(true);
+      const projects = await listShushuProjects(shushuForm.apiBaseUrl, shushuForm.token, shushuForm.loginName);
+      setShushuProjects(projects);
+      if (!shushuForm.projectId && projects[0]) {
+        updateShushuForm("projectId", projects[0].id);
+      }
+      clearErrorPrefix("数数查询");
+    } catch (error) {
+      setShushuProjects([]);
+      pushError("数数查询", error);
+    } finally {
+      setIsReadingShushuProjects(false);
+    }
+  }
+
+  async function handleShushuQuery() {
+    try {
+      setIsQueryingShushu(true);
+      const result = await queryShushuRows({
+        ...shushuForm,
+        eventTable: shushuForm.eventTable.trim() || undefined,
+        pageSize: Number(shushuForm.pageSize) || 1000,
+      });
+      if (result.rows.length === 0) throw new Error("数数查询返回 0 行数据。");
+      applyActualRows(result.rows, result.columns);
+      setLastShushuSql(result.sql);
+      clearErrorPrefix("数数查询");
+    } catch (error) {
+      pushError("数数查询", error);
+    } finally {
+      setIsQueryingShushu(false);
     }
   }
 
@@ -440,15 +517,173 @@ export default function App() {
             </strong>
           </label>
           <div className="upload-box">
-            <label className="file-field">
-              <span>实际 SQL 导出 CSV/Excel</span>
-              <input
-                type="file"
-                accept=".csv,.xls,.xlsx"
-                onChange={(event) => handleActualFile(event.target.files?.[0] ?? null)}
-              />
-              <strong>{actualRows.length} 行记录</strong>
-            </label>
+            <div className="source-tabs" role="tablist" aria-label="实际数据来源">
+              <button
+                className={actualInputMode === "file" ? "active" : ""}
+                onClick={() => setActualInputMode("file")}
+                type="button"
+              >
+                实际 SQL 导出 CSV/Excel
+              </button>
+              <button
+                className={actualInputMode === "shushu" ? "active" : ""}
+                onClick={() => setActualInputMode("shushu")}
+                type="button"
+              >
+                数数自定义查询
+              </button>
+            </div>
+            {actualInputMode === "file" ? (
+              <label className="file-field">
+                <span>实际 SQL 导出 CSV/Excel</span>
+                <input
+                  type="file"
+                  accept=".csv,.xls,.xlsx"
+                  onChange={(event) => handleActualFile(event.target.files?.[0] ?? null)}
+                />
+                <strong>{actualRows.length} 行记录</strong>
+              </label>
+            ) : (
+              <div className="shushu-query-form">
+                <div className="form-grid form-grid-3">
+                  <label className="field-row">
+                    <span>API 地址</span>
+                    <input
+                      value={shushuForm.apiBaseUrl}
+                      onChange={(event) => updateShushuForm("apiBaseUrl", event.target.value)}
+                      placeholder="https://ta.example.com"
+                    />
+                  </label>
+                  <label className="field-row">
+                    <span>OpenAPI Token</span>
+                    <input
+                      value={shushuForm.token}
+                      onChange={(event) => updateShushuForm("token", event.target.value)}
+                      placeholder="token"
+                      type="password"
+                    />
+                  </label>
+                  <label className="field-row">
+                    <span>登录名</span>
+                    <div className="inline-form compact-inline-form">
+                      <input
+                        value={shushuForm.loginName}
+                        onChange={(event) => updateShushuForm("loginName", event.target.value)}
+                        placeholder="name@example.com"
+                      />
+                      <button
+                        className="secondary-button"
+                        disabled={isReadingShushuProjects || !shushuForm.apiBaseUrl || !shushuForm.token || !shushuForm.loginName}
+                        onClick={handleListShushuProjects}
+                        type="button"
+                      >
+                        {isReadingShushuProjects ? "读取中" : "拉取项目"}
+                      </button>
+                    </div>
+                  </label>
+                </div>
+                <div className="form-grid form-grid-3">
+                  <label className="field-row">
+                    <span>项目</span>
+                    {shushuProjects.length > 0 ? (
+                      <select
+                        value={shushuForm.projectId}
+                        onChange={(event) => updateShushuForm("projectId", event.target.value)}
+                      >
+                        {shushuProjects.map((project) => (
+                          <option key={project.id} value={project.id}>
+                            {project.name} ({project.id})
+                          </option>
+                        ))}
+                      </select>
+                    ) : (
+                      <input
+                        value={shushuForm.projectId}
+                        onChange={(event) => updateShushuForm("projectId", event.target.value)}
+                        placeholder="项目 ID"
+                      />
+                    )}
+                  </label>
+                  <label className="field-row">
+                    <span>事件表</span>
+                    <input
+                      value={shushuForm.eventTable}
+                      onChange={(event) => updateShushuForm("eventTable", event.target.value)}
+                      placeholder={shushuForm.projectId ? `v_event_${shushuForm.projectId}` : "v_event_项目ID"}
+                    />
+                  </label>
+                  <label className="field-row">
+                    <span>分页行数</span>
+                    <input
+                      min="1"
+                      max="10000"
+                      type="number"
+                      value={shushuForm.pageSize}
+                      onChange={(event) => updateShushuForm("pageSize", event.target.value)}
+                    />
+                  </label>
+                </div>
+                <div className="form-grid form-grid-4">
+                  <label className="field-row">
+                    <span>开始日期</span>
+                    <input
+                      type="date"
+                      value={shushuForm.startDate}
+                      onChange={(event) => updateShushuForm("startDate", event.target.value)}
+                    />
+                  </label>
+                  <label className="field-row">
+                    <span>结束日期</span>
+                    <input
+                      type="date"
+                      value={shushuForm.endDate}
+                      onChange={(event) => updateShushuForm("endDate", event.target.value)}
+                    />
+                  </label>
+                  <label className="field-row">
+                    <span>日期字段</span>
+                    <select
+                      value={shushuForm.dateColumn}
+                      onChange={(event) => updateShushuForm("dateColumn", event.target.value)}
+                    >
+                      <option value="$part_date">$part_date</option>
+                      <option value="#event_time">#event_time</option>
+                    </select>
+                  </label>
+                  <label className="field-row">
+                    <span>用户 ID</span>
+                    <input
+                      value={shushuForm.userId}
+                      onChange={(event) => updateShushuForm("userId", event.target.value)}
+                      placeholder="可为空"
+                    />
+                  </label>
+                </div>
+                <div className="form-grid form-grid-2">
+                  <label className="field-row">
+                    <span>用户 ID 字段</span>
+                    <select
+                      value={shushuForm.userIdColumn}
+                      onChange={(event) => updateShushuForm("userIdColumn", event.target.value)}
+                    >
+                      <option value="#account_id">#account_id</option>
+                      <option value="#distinct_id">#distinct_id</option>
+                      <option value="user_id">user_id</option>
+                    </select>
+                  </label>
+                  <button
+                    className="primary-button query-button"
+                    disabled={isQueryingShushu || !shushuForm.apiBaseUrl || !shushuForm.token || !shushuForm.projectId}
+                    onClick={handleShushuQuery}
+                    type="button"
+                  >
+                    {isQueryingShushu ? "查询中" : "查询实际数据"}
+                  </button>
+                </div>
+                {lastShushuSql && <code className="sql-preview">{lastShushuSql}</code>}
+                <strong>{actualRows.length} 行记录</strong>
+              </div>
+            )}
             {actualRows.length > 0 && actualColumns.length > 0 && (
               <>
                 <div className="selection-summary">

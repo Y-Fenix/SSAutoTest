@@ -150,10 +150,84 @@ h2 {
   font-weight: 700;
 }
 
+.source-tabs {
+  display: inline-flex;
+  width: 100%;
+  overflow: hidden;
+  border: 1px solid #cfd8e6;
+  border-radius: 6px;
+  background: #ffffff;
+}
+
+.source-tabs button {
+  flex: 1 1 0;
+  min-width: 0;
+  border: 0;
+  border-right: 1px solid #dfe5ef;
+  padding: 9px 10px;
+  background: transparent;
+  color: #526173;
+  cursor: pointer;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.source-tabs button:last-child {
+  border-right: 0;
+}
+
+.source-tabs button.active {
+  background: #2563eb;
+  color: #ffffff;
+}
+
 .inline-form {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 10px;
+}
+
+.compact-inline-form {
+  grid-template-columns: minmax(0, 1fr) max-content;
+}
+
+.shushu-query-form {
+  display: grid;
+  gap: 10px;
+}
+
+.form-grid {
+  display: grid;
+  gap: 10px;
+}
+
+.form-grid-2 {
+  grid-template-columns: minmax(0, 1fr) max-content;
+  align-items: end;
+}
+
+.form-grid-3 {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.form-grid-4 {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.query-button {
+  min-width: 132px;
+}
+
+.sql-preview {
+  display: block;
+  max-height: 72px;
+  overflow: auto;
+  border: 1px solid #d8e1ee;
+  border-radius: 6px;
+  padding: 8px 10px;
+  background: #ffffff;
+  color: #334155;
+  white-space: pre-wrap;
 }
 
 .sheet-picker {
@@ -713,6 +787,13 @@ code {
   }
 
   .inline-form {
+    grid-template-columns: 1fr;
+  }
+
+  .horizontal-upload-list,
+  .form-grid-2,
+  .form-grid-3,
+  .form-grid-4 {
     grid-template-columns: 1fr;
   }
 

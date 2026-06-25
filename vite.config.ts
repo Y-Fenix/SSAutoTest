@@ -6,6 +6,13 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { defineConfig, type Plugin } from "vite";
 import { extractSheets, extractValues, rowsFromValues, toSheetTabs } from "./src/lib/larkSheetServerUtils";
+import {
+  buildShushuSql,
+  normalizeShushuPayload,
+  normalizeShushuQueryConfig,
+  parseShushuResultPageText,
+  type ShushuProjectOption,
+} from "./src/lib/shushuQuery";
 
 const execFileAsync = promisify(execFile);
 let larkCliPathCache: string | null = null;
@@ -174,14 +181,254 @@ function registerLarkSheetApi(middlewares: {
   });
 }
 
+async function readJsonBody<T>(req: AsyncIterable<Buffer>): Promise<T> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of req) chunks.push(Buffer.from(chunk));
+  return JSON.parse(Buffer.concat(chunks).toString("utf8")) as T;
+}
+
+function jsonResponse(res: any, statusCode: number, payload: unknown) {
+  res.statusCode = statusCode;
+  res.setHeader("Content-Type", "application/json; charset=utf-8");
+  res.end(JSON.stringify(payload));
+}
+
+async function postShushuJson(apiBaseUrl: string, pathName: string, params: Record<string, unknown>) {
+  const url = new URL(`${apiBaseUrl}${pathName}`);
+  Object.entries(params).forEach(([key, value]) => {
+    if (value !== undefined && value !== null && String(value).trim()) {
+      url.searchParams.set(key, String(value));
+    }
+  });
+  const response = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+  });
+  const text = await response.text();
+  let payload: Record<string, unknown>;
+  try {
+    payload = JSON.parse(text) as Record<string, unknown>;
+  } catch {
+    payload = { rawText: text };
+  }
+  if (!response.ok) {
+    throw new Error(`数数接口请求失败(${response.status})：${text.slice(0, 500)}`);
+  }
+  return payload;
+}
+
+async function executeShushuSql(apiBaseUrl: string, params: {
+  token: string;
+  sql: string;
+  pageSize: number;
+}) {
+  const url = new URL(`${apiBaseUrl}/open/execute-sql`);
+  url.searchParams.set("token", params.token);
+  const body = new URLSearchParams();
+  body.set("sql", params.sql);
+  body.set("pageSize", String(params.pageSize));
+  body.set("format", "json_object");
+  body.set("timeoutSeconds", "60");
+  const response = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body,
+  });
+  const text = await response.text();
+  let payload: Record<string, unknown>;
+  try {
+    payload = JSON.parse(text) as Record<string, unknown>;
+  } catch {
+    payload = { rawText: text };
+  }
+  if (!response.ok) {
+    throw new Error(`数数 SQL 查询失败(${response.status})：${text.slice(0, 500)}`);
+  }
+  return payload;
+}
+
+function wait(ms: number) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
+async function fetchShushuResultPage(apiBaseUrl: string, params: {
+  token: string;
+  taskId: string;
+  pageId: number;
+  headers: string[];
+}) {
+  const url = new URL(`${apiBaseUrl}/open/sql-result-page`);
+  url.searchParams.set("token", params.token);
+  url.searchParams.set("taskId", params.taskId);
+  url.searchParams.set("pageId", String(params.pageId));
+
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    const response = await fetch(url, { method: "GET" });
+    const text = await response.text();
+    if (!response.ok) {
+      throw new Error(`数数分页结果读取失败(${response.status})：${text.slice(0, 500)}`);
+    }
+    try {
+      const payload = JSON.parse(text) as Record<string, unknown>;
+      if (!isSuccessPayload(payload)) {
+        const message = shushuErrorMessage(payload);
+        if (message.includes("running") && attempt < 9) {
+          await wait(1000);
+          continue;
+        }
+        throw new Error(message);
+      }
+    } catch (error) {
+      if (error instanceof SyntaxError) {
+        return parseShushuResultPageText(params.headers, text);
+      }
+      throw error;
+    }
+    return parseShushuResultPageText(params.headers, text);
+  }
+
+  throw new Error("数数查询任务仍在执行，请稍后重试。");
+}
+
+function isSuccessPayload(payload: Record<string, unknown>) {
+  const code = payload.return_code ?? payload.code ?? payload.status;
+  return code === undefined || code === 0 || code === "0" || code === "success";
+}
+
+function shushuErrorMessage(payload: Record<string, unknown>) {
+  return String(payload.return_message ?? payload.message ?? payload.msg ?? payload.error ?? "数数接口返回失败。");
+}
+
+function normalizeProjectOptions(payload: Record<string, unknown>): ShushuProjectOption[] {
+  const data = payload.data;
+  const items = Array.isArray(data)
+    ? data
+    : data && typeof data === "object"
+      ? ((data as Record<string, unknown>).projects ??
+        (data as Record<string, unknown>).projectList ??
+        (data as Record<string, unknown>).list)
+      : payload.projects;
+  if (!Array.isArray(items)) return [];
+  return items
+    .map((item) => {
+      if (!item || typeof item !== "object") return null;
+      const project = item as Record<string, unknown>;
+      const id = String(project.projectId ?? project.project_id ?? project.id ?? project.appId ?? "").trim();
+      const name = String(project.projectName ?? project.project_name ?? project.name ?? id).trim();
+      return id ? { id, name: name || id } : null;
+    })
+    .filter(Boolean) as ShushuProjectOption[];
+}
+
+async function queryShushuRows(params: Record<string, unknown>) {
+  const config = normalizeShushuQueryConfig(params);
+  if (!config.apiBaseUrl) throw new Error("请填写数数 API 地址。");
+  if (!config.token) throw new Error("请填写数数 OpenAPI Token。");
+  const sql = buildShushuSql(config);
+  const submitPayload = await executeShushuSql(config.apiBaseUrl, {
+    token: config.token,
+    sql,
+    pageSize: config.pageSize,
+  });
+  if (!isSuccessPayload(submitPayload)) throw new Error(shushuErrorMessage(submitPayload));
+
+  const normalizedSubmit = normalizeShushuPayload(submitPayload);
+  if (normalizedSubmit.rows.length > 0) {
+    return {
+      rows: normalizedSubmit.rows,
+      columns: normalizedSubmit.columns,
+      sql,
+      rowCount: normalizedSubmit.rows.length,
+    };
+  }
+
+  const data = submitPayload.data && typeof submitPayload.data === "object" ? submitPayload.data as Record<string, unknown> : {};
+  const taskId = String(
+    submitPayload.taskId ??
+      submitPayload.task_id ??
+      data.taskId ??
+      data.task_id ??
+      "",
+  ).trim();
+  if (!taskId) {
+    throw new Error(`数数查询已提交，但未返回 taskId，无法读取分页结果。原始返回：${JSON.stringify(submitPayload).slice(0, 500)}`);
+  }
+
+  const pageCount = Number(data.pageCount ?? submitPayload.pageCount ?? 1) || 1;
+  const pages = await Promise.all(
+    Array.from({ length: pageCount }, (_, pageId) =>
+      fetchShushuResultPage(config.apiBaseUrl, {
+        token: config.token,
+        taskId,
+        pageId,
+        headers: normalizedSubmit.columns,
+      }),
+    ),
+  );
+  const rows = pages.flat();
+  const columns = normalizedSubmit.columns.length > 0
+    ? normalizedSubmit.columns
+    : [...new Set(rows.flatMap((row) => Object.keys(row)))];
+
+  return { rows, columns, sql, rowCount: Number(data.rowCount ?? rows.length) || rows.length };
+}
+
+function registerShushuApi(middlewares: {
+  use: (route: string, handler: (req: any, res: any) => void) => void;
+}) {
+  middlewares.use("/api/shushu-projects", async (req, res) => {
+    try {
+      if (req.method !== "POST") {
+        jsonResponse(res, 405, { error: "Method not allowed" });
+        return;
+      }
+      const { apiBaseUrl = "", token = "", loginName = "" } = await readJsonBody<{
+        apiBaseUrl?: string;
+        token?: string;
+        loginName?: string;
+      }>(req);
+      const baseUrl = apiBaseUrl.trim().replace(/\/+$/, "");
+      if (!baseUrl) throw new Error("请填写数数 API 地址。");
+      if (!token.trim()) throw new Error("请填写数数 OpenAPI Token。");
+      if (!loginName.trim()) throw new Error("请填写数数登录名。");
+      const payload = await postShushuJson(baseUrl, "/open/project-list", {
+        token: token.trim(),
+        loginName: loginName.trim(),
+        login_name: loginName.trim(),
+      });
+      if (!isSuccessPayload(payload)) throw new Error(shushuErrorMessage(payload));
+      jsonResponse(res, 200, { projects: normalizeProjectOptions(payload) });
+    } catch (error) {
+      jsonResponse(res, 500, { error: String((error as Error).message) });
+    }
+  });
+
+  middlewares.use("/api/shushu-query", async (req, res) => {
+    try {
+      if (req.method !== "POST") {
+        jsonResponse(res, 405, { error: "Method not allowed" });
+        return;
+      }
+      const params = await readJsonBody<Record<string, unknown>>(req);
+      jsonResponse(res, 200, await queryShushuRows(params));
+    } catch (error) {
+      jsonResponse(res, 500, { error: String((error as Error).message) });
+    }
+  });
+}
+
 function larkSheetPlugin(): Plugin {
   return {
-    name: "lark-sheet-api",
+    name: "local-data-api",
     configureServer(server) {
       registerLarkSheetApi(server.middlewares);
+      registerShushuApi(server.middlewares);
     },
     configurePreviewServer(server) {
       registerLarkSheetApi(server.middlewares);
+      registerShushuApi(server.middlewares);
     },
   };
 }
