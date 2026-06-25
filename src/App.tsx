@@ -29,8 +29,9 @@ const defaultShushuForm = {
   startDate: "",
   endDate: "",
   userId: "",
+  appVersion: "",
   dateColumn: "$part_date",
-  userIdColumn: "#account_id",
+  userIdColumn: "#user_id",
   pageSize: "1000",
   maxRows: "1000",
 };
@@ -703,10 +704,10 @@ export default function App() {
                     </select>
                   </label>
                   <label className="field-row">
-                    <span>用户 ID</span>
+                    <span>app_version</span>
                     <input
-                      value={shushuForm.userId}
-                      onChange={(event) => updateShushuForm("userId", event.target.value)}
+                      value={shushuForm.appVersion}
+                      onChange={(event) => updateShushuForm("appVersion", event.target.value)}
                       placeholder="可为空"
                     />
                   </label>
@@ -718,10 +719,19 @@ export default function App() {
                       value={shushuForm.userIdColumn}
                       onChange={(event) => updateShushuForm("userIdColumn", event.target.value)}
                     >
+                      <option value="#user_id">#user_id</option>
                       <option value="#account_id">#account_id</option>
                       <option value="#distinct_id">#distinct_id</option>
                       <option value="user_id">user_id</option>
                     </select>
+                  </label>
+                  <label className="field-row">
+                    <span>用户 ID</span>
+                    <input
+                      value={shushuForm.userId}
+                      onChange={(event) => updateShushuForm("userId", event.target.value)}
+                      placeholder="可为空"
+                    />
                   </label>
                   <label className="field-row">
                     <span>最多读取行数</span>

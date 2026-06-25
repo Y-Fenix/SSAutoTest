@@ -21,10 +21,11 @@ describe("buildShushuSql", () => {
       startDate: "2026-06-01",
       endDate: "2026-06-03",
       userId: "user-1",
+      userIdColumn: "#user_id",
     });
 
     expect(buildShushuSql(config)).toBe(
-      'SELECT * FROM v_event_102 WHERE "$part_date" >= \'2026-06-01\' AND "$part_date" <= \'2026-06-03\' AND "#account_id" = \'user-1\'',
+      'SELECT * FROM v_event_102 WHERE "$part_date" >= \'2026-06-01\' AND "$part_date" <= \'2026-06-03\' AND "#user_id" = \'user-1\'',
     );
   });
 
@@ -35,6 +36,15 @@ describe("buildShushuSql", () => {
     });
 
     expect(buildShushuSql(config)).toBe('SELECT * FROM v_event_102 WHERE "#account_id" = \'a\'\'b\'');
+  });
+
+  it("adds app version filter", () => {
+    const config = normalizeShushuQueryConfig({
+      projectId: "102",
+      appVersion: "2.2.0",
+    });
+
+    expect(buildShushuSql(config)).toBe('SELECT * FROM v_event_102 WHERE "#app_version" = \'2.2.0\'');
   });
 
   it("rejects unsafe identifiers", () => {

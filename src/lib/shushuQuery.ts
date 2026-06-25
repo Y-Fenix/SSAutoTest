@@ -15,6 +15,7 @@ export interface ShushuQueryConfig {
   startDate: string;
   endDate: string;
   userId: string;
+  appVersion: string;
   pageSize: number;
 }
 
@@ -108,6 +109,7 @@ export function normalizeShushuQueryConfig(input: ShushuQueryInput): ShushuQuery
     startDate: String(input.startDate ?? "").trim(),
     endDate: String(input.endDate ?? "").trim(),
     userId: String(input.userId ?? "").trim(),
+    appVersion: String(input.appVersion ?? "").trim(),
     pageSize: Number(input.pageSize) > 0 ? Math.min(Number(input.pageSize), 10000) : 1000,
   };
 }
@@ -124,6 +126,9 @@ export function buildShushuSql(config: ShushuQueryConfig): string {
   }
   if (config.userId) {
     conditions.push(`${quoteIdentifier(config.userIdColumn)} = ${quoteValue(config.userId)}`);
+  }
+  if (config.appVersion) {
+    conditions.push(`${quoteIdentifier("#app_version")} = ${quoteValue(config.appVersion)}`);
   }
 
   return [`SELECT * FROM ${config.eventTable}`, conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : ""]

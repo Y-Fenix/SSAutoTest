@@ -228,6 +228,28 @@ async function postShushuJson(apiBaseUrl: string, pathName: string, params: Reco
   return payload;
 }
 
+async function getShushuJson(apiBaseUrl: string, pathName: string, params: Record<string, unknown>) {
+  const url = new URL(`${apiBaseUrl}${pathName}`);
+  Object.entries(params).forEach(([key, value]) => {
+    if (value !== undefined && value !== null && String(value).trim()) {
+      url.searchParams.set(key, String(value));
+    }
+  });
+  const response = await fetch(url, { method: "GET" });
+  const text = await response.text();
+  let payload: Record<string, unknown>;
+  try {
+    payload = JSON.parse(text) as Record<string, unknown>;
+  } catch {
+    payload = { rawText: text };
+  }
+  if (!response.ok) {
+    throw new Error(friendlyShushuHttpError(response.status, text));
+  }
+  return payload;
+}
+
+
 function buildSqlRequestBody(params: { sql: string; pageSize: number }) {
   const body = new URLSearchParams();
   body.set("sql", params.sql);
@@ -422,7 +444,7 @@ async function getShushuTaskStatus(params: Record<string, unknown>) {
   const config = normalizeShushuQueryConfig(params);
   const taskId = String(params.taskId ?? "").trim();
   if (!taskId) throw new Error("缺少数数查询 taskId。");
-  const payload = await postShushuJson(config.apiBaseUrl, "/open/sql-task-info", {
+  const payload = await getShushuJson(config.apiBaseUrl, "/open/sql-task-info", {
     token: config.token,
     taskId,
   });
