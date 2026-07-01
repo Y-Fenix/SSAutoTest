@@ -661,15 +661,29 @@ export default function App() {
   function formatActualScanProgress(status: ActualFileScanStatus) {
     const receivedSize = formatFileSize(status.progress.bytesRead);
     const totalSize = status.progress.fileSize > 0 ? formatFileSize(status.progress.fileSize) : "未知大小";
+    if (status.status === "queued") {
+      return `服务器扫描排队中：当前第 ${status.progress.position || 1} 位 ｜ ${status.summary || "等待扫描"}`;
+    }
+    if (status.status === "waiting_upload") {
+      return `已轮到本次任务：正在开始上传文件到服务器...`;
+    }
     return `服务器流式扫描中：${status.progress.percent}% ｜ 已接收 ${receivedSize} / ${totalSize} ｜ 已扫描 ${status.progress.scannedRows.toLocaleString()} 行 ｜ 已命中 ${status.progress.matchedEvents} 个预期事件`;
   }
 
-  async function waitForActualScanResult(initialStatus: ActualFileScanStatus, uploadPromise?: Promise<ActualFileScanStatus>) {
+  async function waitForActualScanResult(
+    initialStatus: ActualFileScanStatus,
+    startUpload?: () => Promise<ActualFileScanStatus>,
+  ) {
     let scanId = initialStatus.scanId;
     let status = initialStatus;
+    let uploadPromise: Promise<ActualFileScanStatus> | undefined;
     setActualFileProgress(formatActualScanProgress(status));
 
-    while (status.status === "running") {
+    while (status.status === "queued" || status.status === "waiting_upload" || status.status === "running") {
+      if (status.status === "waiting_upload" && startUpload && !uploadPromise) {
+        setActualFileProgress("排队完成：正在上传并由服务器流式扫描...");
+        uploadPromise = startUpload();
+      }
       await new Promise((resolve) => window.setTimeout(resolve, 1000));
       try {
         status = await getActualFileScanStatus(scanId);
@@ -764,11 +778,9 @@ export default function App() {
       const extension = file.name.split(".").pop()?.toLowerCase();
       if (extension === "csv" || extension === "txt") {
         if (expectedEvents.length === 0) throw new Error("请先读取预期埋点表，再扫描实际数据。");
-        setActualFileProgress(`正在创建后端扫描任务：${file.name}...`);
+        setActualFileProgress(`正在加入服务器扫描队列：${file.name}...`);
         const started = await createActualFileUploadScan(expectedEvents);
-        setActualFileProgress(`正在上传并由后端扫描：${file.name}...`);
-        const uploadPromise = uploadActualFileScanWithId(file, started.scanId);
-        await waitForActualScanResult(started, uploadPromise);
+        await waitForActualScanResult(started, () => uploadActualFileScanWithId(file, started.scanId));
         return;
       }
 

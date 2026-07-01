@@ -6,14 +6,16 @@ export interface ActualFileScanProgress {
   matchedEvents: number;
   fileSize: number;
   bytesRead: number;
+  position: number;
 }
 
 export interface ActualFileScanStatus {
   scanId: string;
-  status: "running" | "done" | "error";
+  status: "queued" | "waiting_upload" | "running" | "done" | "error" | "cancelled";
   progress: ActualFileScanProgress;
   result?: SerializableActualEventScanResult;
   error?: string;
+  summary?: string;
 }
 
 async function readActualScanPayload(response: Response, fallbackMessage: string): Promise<ActualFileScanStatus & { error?: string }> {
@@ -22,7 +24,7 @@ async function readActualScanPayload(response: Response, fallbackMessage: string
     return {
       scanId: "",
       status: "error",
-      progress: { percent: 0, scannedRows: 0, matchedEvents: 0, fileSize: 0, bytesRead: 0 },
+      progress: { percent: 0, scannedRows: 0, matchedEvents: 0, fileSize: 0, bytesRead: 0, position: 0 },
       error: fallbackMessage,
     };
   }
@@ -32,7 +34,7 @@ async function readActualScanPayload(response: Response, fallbackMessage: string
     return {
       scanId: "",
       status: "error",
-      progress: { percent: 0, scannedRows: 0, matchedEvents: 0, fileSize: 0, bytesRead: 0 },
+      progress: { percent: 0, scannedRows: 0, matchedEvents: 0, fileSize: 0, bytesRead: 0, position: 0 },
       error: text.length > 240 ? `${text.slice(0, 240)}...` : text,
     };
   }

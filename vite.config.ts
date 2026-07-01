@@ -49,24 +49,31 @@ const localChromiumCandidates = [
 ];
 const defaultShushuSqlideWebSocketUrl = "wss://example.invalid/v1/ta-websocket/query/replace-with-your-websocket-id";
 const sqlideWebSocketFallbackMs = SHUSHU_SQLIDE_WEBSOCKET_TIMEOUT_MS;
+const actualUploadReadyTimeoutMs = 10 * 60 * 1000;
 const actualScanJobs = new Map<string, ActualFileScanJob>();
+let activeActualScanJobId = "";
 const shushuQueryQueue = new Map<string, ShushuQueueTask>();
 let activeShushuQueueTaskId = "";
 
 type ActualFileScanJob = {
   id: string;
-  status: "running" | "done" | "error";
+  status: "queued" | "waiting_upload" | "running" | "done" | "error" | "cancelled";
+  mode: "path" | "upload";
+  filePath?: string;
+  fileName?: string;
   progress: {
     percent: number;
     scannedRows: number;
     matchedEvents: number;
     fileSize: number;
     bytesRead: number;
+    position: number;
   };
   result?: SerializableActualEventScanResult;
   error?: string;
   expectedEvents?: ExpectedEvent[];
   startedAt: number;
+  requestedAt?: number;
   completedAt?: number;
 };
 
@@ -408,11 +415,81 @@ function buildShushuQueueTaskId() {
 
 function cleanupActualScanJobs() {
   const now = Date.now();
+  const activeJob = activeActualScanJobId ? actualScanJobs.get(activeActualScanJobId) : undefined;
+  if (
+    activeJob?.status === "waiting_upload" &&
+    now - (activeJob.requestedAt ?? activeJob.startedAt) > actualUploadReadyTimeoutMs
+  ) {
+    activeJob.status = "error";
+    activeJob.error = "等待上传超时，请重新选择文件加入队列。";
+    activeJob.completedAt = now;
+    activeActualScanJobId = "";
+  }
   for (const [jobId, job] of actualScanJobs) {
-    if (job.status !== "running" && now - (job.completedAt ?? job.startedAt) > 30 * 60 * 1000) {
+    if (
+      job.status !== "queued" &&
+      job.status !== "waiting_upload" &&
+      job.status !== "running" &&
+      now - (job.completedAt ?? job.startedAt) > 30 * 60 * 1000
+    ) {
       actualScanJobs.delete(jobId);
     }
   }
+}
+
+function queuedActualScanJobs() {
+  return [...actualScanJobs.values()].sort((left, right) => left.startedAt - right.startedAt);
+}
+
+function actualScanQueuedPosition(job: ActualFileScanJob) {
+  if (job.status !== "queued") return 0;
+  const queuedIds = queuedActualScanJobs()
+    .filter((item) => item.status === "queued")
+    .map((item) => item.id);
+  return queuedIds.indexOf(job.id) + 1;
+}
+
+function serializeActualScanJob(job: ActualFileScanJob, options: { includeResult?: boolean } = {}) {
+  return {
+    scanId: job.id,
+    status: job.status,
+    progress: {
+      ...job.progress,
+      position: actualScanQueuedPosition(job),
+    },
+    result: options.includeResult ? job.result : undefined,
+    error: job.error,
+    summary: job.fileName ?? job.filePath ?? "",
+  };
+}
+
+function processNextActualScanJob() {
+  if (activeActualScanJobId) return;
+  const nextJob = queuedActualScanJobs().find((job) => job.status === "queued");
+  if (!nextJob) return;
+
+  activeActualScanJobId = nextJob.id;
+  nextJob.requestedAt = Date.now();
+  if (nextJob.mode === "upload") {
+    nextJob.status = "waiting_upload";
+    return;
+  }
+
+  nextJob.status = "running";
+  void runActualFileScan(nextJob, {
+    filePath: nextJob.filePath ?? "",
+    expectedEvents: nextJob.expectedEvents ?? [],
+  }).finally(() => {
+    if (activeActualScanJobId === nextJob.id) activeActualScanJobId = "";
+    cleanupActualScanJobs();
+    processNextActualScanJob();
+  });
+}
+
+function finishActiveActualScanJob(job: ActualFileScanJob) {
+  if (activeActualScanJobId === job.id) activeActualScanJobId = "";
+  cleanupActualScanJobs();
+  processNextActualScanJob();
 }
 
 function cleanupShushuQueueTasks() {
@@ -675,13 +752,7 @@ function registerActualFileScanApi(middlewares: {
         const scanId = String(params.scanId ?? "").trim();
         const job = actualScanJobs.get(scanId);
         if (!job) throw new Error("未找到本地扫描任务，请重新开始扫描。");
-        jsonResponse(res, 200, {
-          scanId: job.id,
-          status: job.status,
-          progress: job.progress,
-          result: job.result,
-          error: job.error,
-        });
+        jsonResponse(res, 200, serializeActualScanJob(job, { includeResult: true }));
         return;
       }
 
@@ -689,27 +760,28 @@ function registerActualFileScanApi(middlewares: {
       if (expectedEvents.length === 0) throw new Error("请先读取预期埋点表，再扫描本地实际数据。");
       const job: ActualFileScanJob = {
         id: buildActualScanJobId(),
-        status: "running",
+        status: "queued",
+        mode: action === "create-upload" ? "upload" : "path",
+        filePath: String(params.filePath ?? ""),
         progress: {
           percent: 0,
           scannedRows: 0,
           matchedEvents: 0,
           fileSize: 0,
           bytesRead: 0,
+          position: 0,
         },
         expectedEvents,
         startedAt: Date.now(),
       };
       actualScanJobs.set(job.id, job);
       if (action === "create-upload") {
-        jsonResponse(res, 200, { scanId: job.id, status: job.status, progress: job.progress });
+        jsonResponse(res, 200, serializeActualScanJob(job));
+        processNextActualScanJob();
         return;
       }
-      void runActualFileScan(job, {
-        filePath: String(params.filePath ?? ""),
-        expectedEvents,
-      });
-      jsonResponse(res, 200, { scanId: job.id, status: job.status, progress: job.progress });
+      jsonResponse(res, 200, serializeActualScanJob(job));
+      processNextActualScanJob();
     } catch (error) {
       jsonResponse(res, 500, { error: String((error as Error).message) });
     }
@@ -725,6 +797,13 @@ function registerActualFileScanApi(middlewares: {
       const scanId = String(req.headers["x-scan-id"] ?? "").trim();
       const job = actualScanJobs.get(scanId);
       if (!job) throw new Error("未找到上传扫描任务，请重新选择文件。");
+      if (job.mode !== "upload") throw new Error("该任务不是上传扫描任务。");
+      if (job.status === "queued") {
+        throw new Error(`扫描任务仍在排队中，当前第 ${actualScanQueuedPosition(job)} 位，请稍后上传。`);
+      }
+      if (job.status !== "waiting_upload" && job.status !== "running") {
+        throw new Error(job.error || "扫描任务状态已结束，请重新选择文件。");
+      }
       const fileName = decodeURIComponent(String(req.headers["x-file-name"] ?? ""));
       const extension = path.extname(fileName).toLowerCase();
       if (extension !== ".csv" && extension !== ".txt") {
@@ -735,26 +814,31 @@ function registerActualFileScanApi(middlewares: {
         throw new Error("请先读取预期埋点表，再扫描实际数据。");
       }
       job.status = "running";
+      job.fileName = fileName;
       job.progress = {
         percent: 0,
         scannedRows: 0,
         matchedEvents: 0,
         fileSize: Number(req.headers["x-file-size"] ?? 0) || 0,
         bytesRead: 0,
+        position: 0,
       };
       await runActualCsvStreamScan(job, {
         stream: req,
         expectedEvents,
         fileSize: job.progress.fileSize,
       });
-      jsonResponse(res, job.status === "error" ? 500 : 200, {
-        scanId: job.id,
-        status: job.status,
-        progress: job.progress,
-        result: job.result,
-        error: job.error,
-      });
+      jsonResponse(res, job.status === "error" ? 500 : 200, serializeActualScanJob(job, { includeResult: true }));
+      finishActiveActualScanJob(job);
     } catch (error) {
+      const scanId = String(req.headers["x-scan-id"] ?? "").trim();
+      const job = actualScanJobs.get(scanId);
+      if (job && job.status !== "queued" && job.status !== "done" && job.status !== "cancelled") {
+        job.status = "error";
+        job.completedAt = Date.now();
+        job.error = String((error as Error).message);
+        finishActiveActualScanJob(job);
+      }
       jsonResponse(res, 500, { error: String((error as Error).message) });
     }
   });
