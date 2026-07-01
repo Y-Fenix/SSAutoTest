@@ -13,7 +13,7 @@ import {
   type ActualFileScanStatus,
 } from "./lib/actualFileScanClient";
 import { evaluateCoverage } from "./lib/coverageEvaluator";
-import { runEventTestCases, type EventTestCaseResult } from "./lib/eventTestRunner";
+import { loadEventTestCasesFile, runEventTestCases, type EventTestCaseResult } from "./lib/eventTestRunner";
 import { coverageResultsToCsv, downloadCsv } from "./lib/exporter";
 import { listWorkbookSheets, readCsvFileByRows, readTabularFile, readWorkbookSheets } from "./lib/fileReaders";
 import { listLarkSheetTabs, readLarkSheetRows, type LarkSheetTab } from "./lib/larkSheetClient";
@@ -358,6 +358,26 @@ export default function App() {
   const [eventFilterSearch, setEventFilterSearch] = useState("");
   const [shushuEventNameOptions, setShushuEventNameOptions] = useState<string[]>([]);
   const [isLoadingShushuEventNames, setIsLoadingShushuEventNames] = useState(false);
+  const [eventTestCasesVersion, setEventTestCasesVersion] = useState(0);
+  const [eventTestCasesLoadMessage, setEventTestCasesLoadMessage] = useState("正在加载测试用例文件...");
+
+  useEffect(() => {
+    let isMounted = true;
+    loadEventTestCasesFile()
+      .then(() => {
+        if (!isMounted) return;
+        setEventTestCasesLoadMessage("测试用例文件已加载。");
+        setEventTestCasesVersion((version) => version + 1);
+      })
+      .catch((error) => {
+        if (!isMounted) return;
+        setEventTestCasesLoadMessage(String((error as Error).message));
+        setEventTestCasesVersion((version) => version + 1);
+      });
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   useEffect(() => {
     let isMounted = true;
@@ -553,7 +573,7 @@ export default function App() {
     });
   }, [propertyDetailRows, query]);
 
-  const eventTestReport = useMemo(() => runEventTestCases(actualRows), [actualRows]);
+  const eventTestReport = useMemo(() => runEventTestCases(actualRows), [actualRows, eventTestCasesVersion]);
   const filteredEventTestResults = useMemo(() => {
     const needle = query.trim().toLowerCase();
     return eventTestReport.results.filter((result) => {
@@ -1699,7 +1719,9 @@ export default function App() {
         </div>
         <p className="filter-summary">
           {statusFilter === "测试用例"
-            ? `当前显示 ${filteredEventTestResults.length} / ${eventTestReport.totalRules} 条测试用例，已检查 ${eventTestReport.checkedRows.toLocaleString()} 行事件，${eventTestReport.issueCount === 0 ? "全部通过" : `${eventTestReport.issueCount} 个异常`}`
+            ? eventTestReport.loadStatus !== "ready"
+              ? eventTestReport.loadMessage || eventTestCasesLoadMessage
+              : `当前显示 ${filteredEventTestResults.length} / ${eventTestReport.totalRules} 条测试用例，已检查 ${eventTestReport.checkedRows.toLocaleString()} 行事件，${eventTestReport.issueCount === 0 ? "全部通过" : `${eventTestReport.issueCount} 个异常`}`
             : statusFilter === "详情缺失"
             ? `当前显示 ${filteredPropertyDetailRows.length} / ${propertyDetailRows.length} 条属性详情`
             : `当前显示 ${filteredResults.length} / ${detailRows.length} 条明细`}
@@ -1718,7 +1740,13 @@ export default function App() {
                 </tr>
               </thead>
               <tbody key={`test-case:${query}:${filteredEventTestResults.length}`}>
-                {actualRows.length === 0 ? (
+                {eventTestReport.loadStatus !== "ready" ? (
+                  <tr>
+                    <td colSpan={6} className="empty-cell">
+                      {eventTestReport.loadMessage || eventTestCasesLoadMessage}
+                    </td>
+                  </tr>
+                ) : actualRows.length === 0 ? (
                   <tr>
                     <td colSpan={6} className="empty-cell">
                       暂无可执行的原始事件行。请先通过数数查询或页面上传实际数据；大 CSV 扫描当前只保留覆盖摘要，无法执行顺序类测试用例。
