@@ -39,6 +39,38 @@ export interface SerializableActualEventScanResult {
   columns: string[];
   eventNameColumn: string;
   rowCount: number;
+  eventTestReport?: {
+    totalRules: number;
+    checkedRows: number;
+    issueCount: number;
+    issues: Array<{
+      ruleId: string;
+      ruleName: string;
+      eventName: string;
+      rowIndex: number;
+      expected: string;
+      actual: string;
+      detail: string;
+      displayLines?: string[];
+    }>;
+    results: Array<{
+      ruleId: string;
+      ruleName: string;
+      status: "测试通过" | "测试不通过";
+      checkedCount: number;
+      issueCount: number;
+      issues: Array<{
+        ruleId: string;
+        ruleName: string;
+        eventName: string;
+        rowIndex: number;
+        expected: string;
+        actual: string;
+        detail: string;
+        displayLines?: string[];
+      }>;
+    }>;
+  };
 }
 
 export type CoverageStatus = "测试通过" | "属性缺失" | "详情缺失" | "事件缺失";

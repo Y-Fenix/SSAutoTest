@@ -158,11 +158,13 @@ export function serializeActualEventScanResult(params: {
   columns: string[];
   eventNameColumn: string;
   rowCount: number;
+  eventTestReport?: SerializableActualEventScanResult["eventTestReport"];
 }): SerializableActualEventScanResult {
   return {
     columns: params.columns,
     eventNameColumn: params.eventNameColumn,
     rowCount: params.rowCount,
+    eventTestReport: params.eventTestReport,
     events: [...params.actualEvents.values()].map((event) => ({
       eventName: event.eventName,
       displayNames: [...event.displayNames],
@@ -178,6 +180,7 @@ export function hydrateActualEventScanResult(result: SerializableActualEventScan
     columns: result.columns,
     eventNameColumn: result.eventNameColumn,
     rowCount: result.rowCount,
+    eventTestReport: result.eventTestReport,
     actualEvents: new Map(
       result.events.map((event) => [
         event.eventName,

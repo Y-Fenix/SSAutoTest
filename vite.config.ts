@@ -5,6 +5,7 @@ import { access, mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
+import vm from "node:vm";
 import Papa from "papaparse";
 import { defineConfig, type Plugin } from "vite";
 import {
@@ -50,6 +51,33 @@ const localChromiumCandidates = [
 const defaultShushuSqlideWebSocketUrl = "wss://example.invalid/v1/ta-websocket/query/replace-with-your-websocket-id";
 const sqlideWebSocketFallbackMs = SHUSHU_SQLIDE_WEBSOCKET_TIMEOUT_MS;
 const actualUploadReadyTimeoutMs = 10 * 60 * 1000;
+const eventTestCaseFilePath = path.resolve(process.cwd(), "public/event-test-cases.js");
+const eventTestRowColumns = new Set([
+  "#event_name",
+  "event_name",
+  "事件名",
+  "event",
+  "#event_time",
+  "event_time",
+  "事件时间",
+  "#account_id",
+  "account_id",
+  "#user_id",
+  "user_id",
+  "is_gm",
+  "#is_gm",
+  "item_info",
+  "item_type",
+  "item_source",
+  "item_count_now",
+  "type",
+  "action",
+  "scene",
+  "scence",
+  "reward_scene",
+  "level_type",
+  "level_mode_id",
+]);
 const actualScanJobs = new Map<string, ActualFileScanJob>();
 let activeActualScanJobId = "";
 const shushuQueryQueue = new Map<string, ShushuQueueTask>();
@@ -405,6 +433,32 @@ function isIgnorableCsvError(error: Papa.ParseError): boolean {
   return error.code === "UndetectableDelimiter";
 }
 
+function compactEventTestRow(row: RawRow): RawRow {
+  const compact: RawRow = {};
+  for (const [key, value] of Object.entries(row)) {
+    const normalizedKey = key.trim();
+    if (!eventTestRowColumns.has(normalizedKey)) continue;
+    compact[normalizedKey] = value;
+  }
+  return compact;
+}
+
+async function runServerEventTestCases(rows: RawRow[]): Promise<SerializableActualEventScanResult["eventTestReport"]> {
+  if (rows.length === 0) return undefined;
+  const code = await readFile(eventTestCaseFilePath, "utf8");
+  const context = vm.createContext({});
+  vm.runInContext(code, context, { filename: eventTestCaseFilePath });
+  const runner = (context as {
+    SSAutoTestEventTestCases?: {
+      runEventTestCases?: (rows: RawRow[]) => SerializableActualEventScanResult["eventTestReport"];
+    };
+  }).SSAutoTestEventTestCases;
+  if (typeof runner?.runEventTestCases !== "function") {
+    throw new Error("测试用例文件没有暴露 runEventTestCases(rows)。");
+  }
+  return runner.runEventTestCases(rows);
+}
+
 function buildActualScanJobId() {
   return `actual_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
 }
@@ -599,6 +653,7 @@ async function runActualFileScan(job: ActualFileScanJob, params: {
       expectedEventNames,
       distinctValueLimitPerProperty: 500,
     });
+    const eventTestRows: RawRow[] = [];
     const fileStream = createReadStream(filePath, { encoding: "utf8" });
     fileStream.on("data", (chunk) => {
       job.progress.bytesRead += Buffer.byteLength(chunk, "utf8");
@@ -621,6 +676,8 @@ async function runActualFileScan(job: ActualFileScanJob, params: {
         if (Object.keys(normalized).length === 0) return;
         job.progress.scannedRows += 1;
         accumulator.addRow(normalized);
+        const eventTestRow = compactEventTestRow(normalized);
+        if (Object.keys(eventTestRow).length > 0) eventTestRows.push(eventTestRow);
         if (job.progress.scannedRows % 1000 === 0) {
           job.progress.matchedEvents = accumulator.getResult().actualEvents.size;
         }
@@ -649,6 +706,7 @@ async function runActualFileScan(job: ActualFileScanJob, params: {
     job.result = serializeActualEventScanResult({
       ...result,
       rowCount: job.progress.scannedRows,
+      eventTestReport: await runServerEventTestCases(eventTestRows),
     });
   } catch (error) {
     job.status = "error";
@@ -672,6 +730,7 @@ async function runActualCsvStreamScan(job: ActualFileScanJob, params: {
       expectedEventNames,
       distinctValueLimitPerProperty: 500,
     });
+    const eventTestRows: RawRow[] = [];
 
     params.stream.on("data", (chunk: Buffer | string) => {
       job.progress.bytesRead += Buffer.isBuffer(chunk) ? chunk.length : Buffer.byteLength(chunk, "utf8");
@@ -694,6 +753,8 @@ async function runActualCsvStreamScan(job: ActualFileScanJob, params: {
         if (Object.keys(normalized).length === 0) return;
         job.progress.scannedRows += 1;
         accumulator.addRow(normalized);
+        const eventTestRow = compactEventTestRow(normalized);
+        if (Object.keys(eventTestRow).length > 0) eventTestRows.push(eventTestRow);
         if (job.progress.scannedRows % 1000 === 0) {
           job.progress.matchedEvents = accumulator.getResult().actualEvents.size;
         }
@@ -722,6 +783,7 @@ async function runActualCsvStreamScan(job: ActualFileScanJob, params: {
     job.result = serializeActualEventScanResult({
       ...result,
       rowCount: job.progress.scannedRows,
+      eventTestReport: await runServerEventTestCases(eventTestRows),
     });
   } catch (error) {
     job.status = "error";

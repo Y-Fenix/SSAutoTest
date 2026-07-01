@@ -13,7 +13,7 @@ import {
   type ActualFileScanStatus,
 } from "./lib/actualFileScanClient";
 import { evaluateCoverage } from "./lib/coverageEvaluator";
-import { loadEventTestCasesFile, runEventTestCases, type EventTestCaseResult } from "./lib/eventTestRunner";
+import { loadEventTestCasesFile, runEventTestCases, type EventTestCaseResult, type EventTestReport } from "./lib/eventTestRunner";
 import { coverageResultsToCsv, downloadCsv } from "./lib/exporter";
 import { listWorkbookSheets, readCsvFileByRows, readTabularFile, readWorkbookSheets } from "./lib/fileReaders";
 import { listLarkSheetTabs, readLarkSheetRows, type LarkSheetTab } from "./lib/larkSheetClient";
@@ -318,6 +318,7 @@ export default function App() {
   const [actualRows, setActualRows] = useState<RawRow[]>([]);
   const [actualRowCount, setActualRowCount] = useState(0);
   const [actualEventSummaries, setActualEventSummaries] = useState<Map<string, ActualEventSummary> | null>(null);
+  const [serverEventTestReport, setServerEventTestReport] = useState<EventTestReport | null>(null);
   const [actualColumns, setActualColumns] = useState<string[]>([]);
   const [actualEventNameColumn, setActualEventNameColumn] = useState("");
   const [isReadingActualFile, setIsReadingActualFile] = useState(false);
@@ -573,7 +574,16 @@ export default function App() {
     });
   }, [propertyDetailRows, query]);
 
-  const eventTestReport = useMemo(() => runEventTestCases(actualRows), [actualRows, eventTestCasesVersion]);
+  const eventTestReport = useMemo(() => {
+    if (actualRows.length === 0 && serverEventTestReport) {
+      return {
+        ...serverEventTestReport,
+        loadStatus: "ready" as const,
+        loadMessage: "服务器已完成大 CSV 测试用例计算。",
+      };
+    }
+    return runEventTestCases(actualRows);
+  }, [actualRows, eventTestCasesVersion, serverEventTestReport]);
   const filteredEventTestResults = useMemo(() => {
     const needle = query.trim().toLowerCase();
     return eventTestReport.results.filter((result) => {
@@ -725,6 +735,7 @@ export default function App() {
     const result = hydrateActualEventScanResult(status.result);
     if (result.rowCount === 0) throw new Error("实际事件数据为空。");
     applyActualSummary(result.actualEvents, result.columns, result.eventNameColumn, result.rowCount);
+    setServerEventTestReport(result.eventTestReport ?? null);
     setActualFileProgress(`服务器流式扫描完成：已扫描 ${result.rowCount.toLocaleString()} 行`);
   }
 
@@ -824,6 +835,7 @@ export default function App() {
     setActualRows([]);
     setActualRowCount(rowCount);
     setActualEventSummaries(summaries);
+    setServerEventTestReport(null);
     setActualColumns(columns);
     setActualEventNameColumn(eventNameColumn);
     setIsActualColumnExpanded(false);
@@ -842,6 +854,7 @@ export default function App() {
     setActualRows(rows);
     setActualRowCount(rows.length);
     setActualEventSummaries(null);
+    setServerEventTestReport(null);
     setActualColumns(columns);
     setActualEventNameColumn(detectedColumn ?? "");
     setIsActualColumnExpanded(false);
@@ -1746,7 +1759,7 @@ export default function App() {
                       {eventTestReport.loadMessage || eventTestCasesLoadMessage}
                     </td>
                   </tr>
-                ) : actualRows.length === 0 ? (
+                ) : actualRows.length === 0 && !serverEventTestReport ? (
                   <tr>
                     <td colSpan={6} className="empty-cell">
                       暂无可执行的原始事件行。请先通过数数查询或页面上传实际数据；大 CSV 扫描当前只保留覆盖摘要，无法执行顺序类测试用例。
