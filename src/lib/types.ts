@@ -23,6 +23,22 @@ export interface ActualEventSummary {
   displayNames: Set<string>;
   properties: Set<string>;
   rows: RawRow[];
+  rowCount?: number;
+}
+
+export interface SerializableActualEventSummary {
+  eventName: string;
+  displayNames: string[];
+  properties: string[];
+  rows: RawRow[];
+  rowCount?: number;
+}
+
+export interface SerializableActualEventScanResult {
+  events: SerializableActualEventSummary[];
+  columns: string[];
+  eventNameColumn: string;
+  rowCount: number;
 }
 
 export type CoverageStatus = "测试通过" | "属性缺失" | "详情缺失" | "事件缺失";

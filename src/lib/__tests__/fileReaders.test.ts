@@ -3,6 +3,21 @@ import * as XLSX from "xlsx";
 import { listWorkbookSheets, readWorkbookSheets, readTabularFile } from "../fileReaders";
 
 describe("readTabularFile", () => {
+  it("reads Shushu CSV exports with a UTF-8 BOM and quoted hash headers", async () => {
+    const file = new File([
+      '\uFEFF"$part_event",$part_date,"#event_name",level_id\nlevel_start,2026-06-25,level_start,1\n',
+    ], "shushu.csv", { type: "text/csv" });
+
+    await expect(readTabularFile(file)).resolves.toEqual([
+      {
+        "$part_event": "level_start",
+        "$part_date": "2026-06-25",
+        "#event_name": "level_start",
+        level_id: "1",
+      },
+    ]);
+  });
+
   it("reads and merges the first two Excel sheets only", async () => {
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(

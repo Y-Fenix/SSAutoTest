@@ -35,6 +35,10 @@ function matchesRule(value: string, rule: string): boolean {
   if (normalizedRule === "string") return normalizedValue.length > 0;
   if (normalizedRule === "string_or_empty") return true;
   if (normalizedRule === "url_string") return /^https?:\/\//i.test(normalizedValue) || normalizedValue.includes(".");
+  if (normalizedRule === "number>=0") {
+    const numberValue = Number(normalizedValue);
+    return Number.isFinite(numberValue) && numberValue >= 0;
+  }
   if (normalizedRule === "int>=0") {
     const numberValue = Number(normalizedValue);
     return Number.isInteger(numberValue) && numberValue >= 0;
@@ -48,6 +52,20 @@ function matchesRule(value: string, rule: string): boolean {
 
 function hasExpectedDetailValue(actual: ActualEventSummary, propertyName: string, expectedDetail: string): boolean {
   return getCoveredDetailItems(actual, propertyName, expectedDetail).length > 0;
+}
+
+function isGenericDetailRule(rule: string): boolean {
+  const normalizedRule = rule.trim().toLowerCase();
+  return [
+    "string",
+    "string_or_empty",
+    "url_string",
+    "number>=0",
+    "int>=0",
+    "int",
+    "float",
+    "number",
+  ].includes(normalizedRule) || normalizedRule.includes("<int>") || normalizedRule.includes("<tag>") || normalizedRule.includes("<eventname>");
 }
 
 function getCoveredDetailValues(actual: ActualEventSummary, propertyName: string, expectedDetail: string): string[] {
@@ -224,7 +242,7 @@ export function evaluateCoverage(
       coveredDetailItems,
       valueIssues: [],
       status,
-      triggerCount: actual.rows.length,
+      triggerCount: actual.rowCount ?? actual.rows.length,
       passRate: makePassRate(passedProperties, expectedProperties),
       notes: event.notes,
     };
@@ -239,7 +257,8 @@ export function evaluateCoverage(
     0,
   );
   const expectedEventNames = new Set(expectedEvents.map((event) => event.eventName));
-  const coveredEventCount = results.filter((result) => result.status === "测试通过").length;
+  const missingEventCount = results.filter((result) => result.status === "事件缺失").length;
+  const coveredEventCount = results.length - missingEventCount;
   const totalDetailProperties = results.reduce(
     (sum, result) => sum + Object.values(result.propertyDetailItems).reduce(
       (itemSum, items) => itemSum + items.length,
@@ -261,7 +280,7 @@ export function evaluateCoverage(
     summary: {
       totalEvents: results.length,
       coveredEvents: coveredEventCount,
-      missingEvents: results.filter((result) => result.status === "事件缺失").length,
+      missingEvents: missingEventCount,
       propertyMissingEvents: results.filter((result) => result.status === "属性缺失").length,
       detailMissingEvents: missingDetailProperties,
       totalProperties,

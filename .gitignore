@@ -8,3 +8,5 @@ outputs/
 *.pid
 *.local
 config/shushu.local.json
+config/shushu.local.json*
+shushu-browser-profile/

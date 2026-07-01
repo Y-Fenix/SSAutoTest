@@ -1,4 +1,4 @@
-import type { ActualEventSummary, RawRow } from "./types";
+import type { ActualEventSummary, ExpectedEvent, RawRow, SerializableActualEventScanResult } from "./types";
 
 export const EVENT_NAME_ALIASES = ["#event_name", "$part_event", "event_name", "事件名", "事件名称", "event", "事件"];
 
@@ -58,4 +58,137 @@ export function parseActualDataRows(
   }
 
   return summaries;
+}
+
+export function expectedPropertyNames(expectedEvents: ExpectedEvent[]): Set<string> {
+  return new Set(expectedEvents.flatMap((event) => event.properties.map((property) => property.propertyName)));
+}
+
+export function createActualEventAccumulator(params: {
+  eventNameColumn?: string;
+  expectedProperties?: Set<string>;
+  expectedEventNames?: Set<string>;
+  sampleLimitPerEvent?: number;
+  distinctValueLimitPerProperty?: number;
+}) {
+  const summaries = new Map<string, ActualEventSummary>();
+  const distinctValuesByEvent = new Map<string, Map<string, Set<string>>>();
+  let detectedEventNameColumn = params.eventNameColumn ?? "";
+  const observedColumns = new Set<string>();
+  const expectedProperties = params.expectedProperties ?? new Set<string>();
+  const keepAllProperties = expectedProperties.size === 0;
+  const expectedEventNames = params.expectedEventNames ?? new Set<string>();
+  const sampleLimitPerEvent = Math.max(1, Math.floor(params.sampleLimitPerEvent ?? Number.POSITIVE_INFINITY));
+  const distinctValueLimitPerProperty =
+    params.distinctValueLimitPerProperty === undefined
+      ? Number.POSITIVE_INFINITY
+      : Math.max(1, Math.floor(params.distinctValueLimitPerProperty));
+
+  function addRow(row: RawRow) {
+    const columns = Object.keys(row).map((key) => key.trim()).filter(Boolean);
+    columns.forEach((column) => observedColumns.add(column));
+    if (!detectedEventNameColumn) {
+      detectedEventNameColumn = EVENT_NAME_ALIASES.find((alias) => columns.includes(alias)) ?? "";
+    }
+    if (!detectedEventNameColumn) return;
+
+    const rawEventName = row[detectedEventNameColumn];
+    if (!isPresent(rawEventName)) return;
+    const displayName = String(rawEventName).trim();
+    const eventName = displayName;
+    if (expectedEventNames.size > 0 && !expectedEventNames.has(eventName)) return;
+    const summary =
+      summaries.get(eventName) ??
+      {
+        eventName,
+        displayNames: new Set<string>(),
+        properties: new Set<string>(),
+        rows: [],
+        rowCount: 0,
+      };
+
+    summary.displayNames.add(displayName);
+    summary.rowCount = (summary.rowCount ?? 0) + 1;
+    const shouldKeepRow = Number.isFinite(distinctValueLimitPerProperty)
+      ? false
+      : summary.rows.length < sampleLimitPerEvent;
+    const eventDistinctValues =
+      distinctValuesByEvent.get(eventName) ?? new Map<string, Set<string>>();
+
+    const compactRow: RawRow = {};
+    for (const [key, value] of Object.entries(row)) {
+      const propertyName = key.trim();
+      if (!propertyName || propertyName === detectedEventNameColumn || !isPresent(value)) continue;
+      if (!keepAllProperties && !expectedProperties.has(propertyName)) continue;
+      summary.properties.add(propertyName);
+      if (shouldKeepRow) compactRow[propertyName] = value;
+      if (Number.isFinite(distinctValueLimitPerProperty)) {
+        const normalizedValue = String(value).trim();
+        const propertyValues = eventDistinctValues.get(propertyName) ?? new Set<string>();
+        if (!propertyValues.has(normalizedValue) && propertyValues.size < distinctValueLimitPerProperty) {
+          propertyValues.add(normalizedValue);
+          summary.rows.push({ [propertyName]: value });
+        }
+        eventDistinctValues.set(propertyName, propertyValues);
+      }
+    }
+    distinctValuesByEvent.set(eventName, eventDistinctValues);
+    if (shouldKeepRow && Object.keys(compactRow).length > 0) summary.rows.push(compactRow);
+    summaries.set(eventName, summary);
+  }
+
+  return {
+    addRow,
+    isComplete() {
+      if (expectedEventNames.size === 0) return false;
+      return [...expectedEventNames].every((eventName) => (summaries.get(eventName)?.rows.length ?? 0) >= sampleLimitPerEvent);
+    },
+    getResult() {
+      return {
+        actualEvents: summaries,
+        columns: [...observedColumns],
+        eventNameColumn: detectedEventNameColumn,
+      };
+    },
+  };
+}
+
+export function serializeActualEventScanResult(params: {
+  actualEvents: Map<string, ActualEventSummary>;
+  columns: string[];
+  eventNameColumn: string;
+  rowCount: number;
+}): SerializableActualEventScanResult {
+  return {
+    columns: params.columns,
+    eventNameColumn: params.eventNameColumn,
+    rowCount: params.rowCount,
+    events: [...params.actualEvents.values()].map((event) => ({
+      eventName: event.eventName,
+      displayNames: [...event.displayNames],
+      properties: [...event.properties],
+      rows: event.rows,
+      rowCount: event.rowCount,
+    })),
+  };
+}
+
+export function hydrateActualEventScanResult(result: SerializableActualEventScanResult) {
+  return {
+    columns: result.columns,
+    eventNameColumn: result.eventNameColumn,
+    rowCount: result.rowCount,
+    actualEvents: new Map(
+      result.events.map((event) => [
+        event.eventName,
+        {
+          eventName: event.eventName,
+          displayNames: new Set(event.displayNames),
+          properties: new Set(event.properties),
+          rows: event.rows,
+          rowCount: event.rowCount,
+        },
+      ]),
+    ) as Map<string, ActualEventSummary>,
+  };
 }
